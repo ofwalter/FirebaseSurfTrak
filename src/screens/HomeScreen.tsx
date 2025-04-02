@@ -41,11 +41,18 @@ const colors = {
 const TopBar = () => (
   <BlurView intensity={80} tint="light" style={styles.topBarContainer}>
     <View style={styles.topBarContent}>
-      {/* Profile Photo Placeholder */}
-      <View style={styles.profilePhotoPlaceholder} />
+      {/* Use actual Profile Photo - Corrected Path */}
+      <Image
+        // Path goes up two levels from src/screens to root, then into assets
+        source={require('../../assets/placeholder-profilephoto.png')}
+        style={styles.profilePhoto}
+      />
 
-      {/* Logo Placeholder */}
-      <Text style={styles.logoPlaceholder}>SurfTrak</Text>
+      {/* Use actual Logo Image - Corrected Path and Case */}
+      <Image
+        source={require('../../assets/SurfTrak-FullLogo.png')}
+        style={styles.logoImage}
+      />
 
       {/* Settings Button */}
       <TouchableOpacity style={styles.settingsButton}>
@@ -326,8 +333,8 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 10,
-    paddingTop: Platform.OS === 'ios' ? 50 : 25, // Increased top padding
-    paddingBottom: 15, // Increased bottom padding
+    paddingTop: Platform.OS === 'ios' ? 55 : 30, // Increased top padding further
+    paddingBottom: 20, // Increased bottom padding further
     borderBottomWidth: 0,
   },
   topBarContent: {
@@ -336,28 +343,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: 15,
   },
-  profilePhotoPlaceholder: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#ccc', // Placeholder color
+  profilePhoto: { // Style for actual profile photo
+    width: 45,
+    height: 45,
+    borderRadius: 22.5, // Keep it circular
   },
-  logoPlaceholder: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: colors.textPrimary, // Or your logo color
-    // If using an image: width: 120, height: 30, resizeMode: 'contain'
+  logoImage: { // Style for actual logo image
+    width: 150, // Adjust width as needed
+    height: 35, // Adjust height as needed
+    resizeMode: 'contain', // Scale the image appropriately
   },
   settingsButton: {
     padding: 8,
     borderRadius: 20,
-    backgroundColor: colors.white, // Slight background as per image
-    // Add shadow if needed
+    backgroundColor: colors.white,
   },
   // Goal Card Styles
   goalCard: {
     marginHorizontal: GOAL_CARD_HORIZONTAL_PADDING,
-    marginTop: 115,
+    marginTop: 130, // Increased top margin even further to clear larger header
     borderRadius: 20,
     padding: 20,
     overflow: 'hidden',

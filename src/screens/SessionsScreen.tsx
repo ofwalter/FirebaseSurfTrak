@@ -1,201 +1,232 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, StyleSheet, Button, FlatList, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
-import { db, auth } from '../services/firebaseConfig'; // Import db and auth
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  ActivityIndicator,
+  TouchableOpacity,
+  Alert,
+  Platform,
+} from 'react-native';
+import { db, auth } from '../services/firebaseConfig';
 import { collection, addDoc, query, where, getDocs, Timestamp, doc, writeBatch } from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth'; // Import User type
-import { useNavigation } from '@react-navigation/native'; // Import navigation hook
-import { NativeStackNavigationProp } from '@react-navigation/native-stack'; // Import stack navigation prop type
-import { AppStackParamList } from '../navigation/AppNavigator'; // Import the stack param list type
+import { onAuthStateChanged, User } from 'firebase/auth';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { AppStackParamList } from '../navigation/AppNavigator';
+import { BlurView } from 'expo-blur';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import SessionCard from '../components/SessionCard';
 
-// Define interfaces for our data structures
+// Interfaces (can be moved to types file)
 interface Wave {
-  id?: string; // Firestore document ID (optional)
+  id?: string;
   startTime: Timestamp;
   endTime: Timestamp;
-  duration: number; // seconds
-  topSpeed: number; // km/h or mph
+  duration: number;
+  topSpeed: number;
   averageSpeed: number;
 }
-
 interface Session {
-  id?: string; // Firestore document ID (optional)
+  id?: string;
   userId: string;
   location: string;
   sessionDate: Timestamp;
   waveCount: number;
-  totalDuration: number; // seconds
-  // waves?: Wave[]; // We'll load waves separately when needed
+  totalDuration: number;
 }
 
-// Define the type for the navigation prop based on our AppStackParamList
-// This helps TypeScript understand the navigate function and its params
-type SessionsScreenNavigationProp = NativeStackNavigationProp<
-  AppStackParamList, // The list of all screens in the stack
-  'AppTabs'         // The current screen's route name within the stack (Tabs container)
->;
+// Define colors (reuse from HomeScreen or centralize)
+const colors = {
+  primaryBlue: '#1A73E8',
+  secondaryBlue: '#0056B3',
+  lightBlue: '#4AB1FF',
+  background: '#f0f4f8',
+  cardBackground: '#ffffff',
+  textPrimary: '#1f2937',
+  textSecondary: '#6b7280',
+  white: '#ffffff',
+};
+
+type SessionsScreenNavigationProp = NativeStackNavigationProp<AppStackParamList, 'AppTabs'>;
+
+// --- Header Component ---
+interface SessionsHeaderProps {
+  onAddPress: () => void;
+  onFilterPress: () => void; // Placeholder for filter action
+  isAdding: boolean; // To disable add button while processing
+}
+
+const SessionsHeader = ({ onAddPress, onFilterPress, isAdding }: SessionsHeaderProps) => (
+  <BlurView intensity={80} tint="light" style={styles.headerContainer}>
+    <View style={styles.headerContent}>
+      {/* Add Button */}
+      <TouchableOpacity
+        style={styles.headerButtonCircle}
+        onPress={onAddPress}
+        disabled={isAdding}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="add" size={30} color={colors.white} />
+      </TouchableOpacity>
+
+      {/* Title */}
+      <Text style={styles.headerTitle}>Sessions</Text>
+
+      {/* Filter Button */}
+      <TouchableOpacity
+        style={styles.headerButtonCircleSmall}
+        onPress={onFilterPress}
+        activeOpacity={0.7}
+      >
+        <Ionicons name="filter-outline" size={20} color={colors.primaryBlue} />
+      </TouchableOpacity>
+    </View>
+  </BlurView>
+);
+
+// --- SessionsScreen Implementation ---
 
 const SessionsScreen = () => {
-  const navigation = useNavigation<SessionsScreenNavigationProp>(); // Get navigation object
+  const navigation = useNavigation<SessionsScreenNavigationProp>();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
 
-  // Get current user
+  // Get current user (same as before)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      if (!user) {
-        // Handle logged out state if necessary (e.g., clear sessions)
-        setSessions([]);
-        setLoading(false);
-      }
+       setCurrentUser(user);
+        if (!user) {
+            setSessions([]);
+            setLoading(false);
+        }
     });
-    return () => unsubscribe(); // Cleanup subscription
+    return () => unsubscribe();
   }, []);
 
-  // Fetch sessions for the current user
+  // Fetch sessions (same as before)
   const fetchSessions = useCallback(async () => {
     if (!currentUser) {
-       setLoading(false);
-       return; // No user logged in
+        setLoading(false);
+        return;
     }
     setLoading(true);
     try {
-      const sessionsRef = collection(db, 'sessions');
-      const q = query(sessionsRef, where('userId', '==', currentUser.uid));
-      const querySnapshot = await getDocs(q);
-      const fetchedSessions: Session[] = [];
-      querySnapshot.forEach((doc) => {
-        // Add Firestore ID to the session object
-        fetchedSessions.push({ id: doc.id, ...doc.data() } as Session);
-      });
-      // Sort sessions by date, newest first
-      fetchedSessions.sort((a, b) => b.sessionDate.seconds - a.sessionDate.seconds);
-      setSessions(fetchedSessions);
+        const sessionsRef = collection(db, 'sessions');
+        const q = query(sessionsRef, where('userId', '==', currentUser.uid));
+        const querySnapshot = await getDocs(q);
+        const fetchedSessions: Session[] = [];
+        querySnapshot.forEach((doc) => {
+            fetchedSessions.push({ id: doc.id, ...doc.data() } as Session);
+        });
+        fetchedSessions.sort((a, b) => b.sessionDate.seconds - a.sessionDate.seconds);
+        setSessions(fetchedSessions);
     } catch (error) {
-      console.error("Error fetching sessions: ", error);
-      Alert.alert("Error", "Could not fetch sessions.");
+        console.error("Error fetching sessions: ", error);
+        Alert.alert("Error", "Could not fetch sessions.");
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
-  }, [currentUser]); // Dependency: refetch if user changes
+  }, [currentUser]);
 
-  // Fetch sessions when user is available or changes
+  // Fetch sessions when user available (same as before)
   useEffect(() => {
     if (currentUser) {
-      fetchSessions();
+        fetchSessions();
     }
   }, [currentUser, fetchSessions]);
 
-
-  // Function to add a fake session with fake waves
+  // Add Fake Session (same logic, triggered by header button)
   const addFakeSession = async () => {
-     if (!currentUser) {
+    if (!currentUser) {
         Alert.alert("Error", "You must be logged in to add a session.");
         return;
-     }
-     setAdding(true);
+    }
+    setAdding(true);
     try {
         const sessionDate = Timestamp.now();
-        const waveCount = Math.floor(Math.random() * 10) + 3; // 3-12 waves
+        const waveCount = Math.floor(Math.random() * 10) + 3;
         let totalDuration = 0;
-
-        // 1. Create the main session document data
         const newSessionData: Omit<Session, 'id'> = {
             userId: currentUser.uid,
             location: `Fake Beach ${Math.floor(Math.random() * 10)}`,
             sessionDate: sessionDate,
             waveCount: waveCount,
-            totalDuration: 0, // We'll update this after creating waves
+            totalDuration: 0,
         };
-
-         // 2. Add the session document to get its ID
-         const sessionRef = await addDoc(collection(db, "sessions"), newSessionData);
-         console.log("Session added with ID: ", sessionRef.id);
-
-
-        // 3. Create fake wave data and add them to a subcollection using a batch write
+        const sessionRef = await addDoc(collection(db, "sessions"), newSessionData);
         const batch = writeBatch(db);
         const wavesSubCollectionRef = collection(db, "sessions", sessionRef.id, "waves");
-
         for (let i = 0; i < waveCount; i++) {
-             const duration = Math.floor(Math.random() * 45) + 5; // 5-50 seconds
-             const startTime = Timestamp.fromMillis(sessionDate.toMillis() + i * 60000 + Math.random() * 5000); // Stagger start times
-             const endTime = Timestamp.fromMillis(startTime.toMillis() + duration * 1000);
-             totalDuration += duration;
-
+            const duration = Math.floor(Math.random() * 45) + 5;
+            const startTime = Timestamp.fromMillis(sessionDate.toMillis() + i * 60000 + Math.random() * 5000);
+            const endTime = Timestamp.fromMillis(startTime.toMillis() + duration * 1000);
+            totalDuration += duration;
             const newWaveData: Omit<Wave, 'id'> = {
                 startTime: startTime,
                 endTime: endTime,
                 duration: duration,
-                topSpeed: Math.random() * 30 + 10, // 10-40 units
-                averageSpeed: Math.random() * 15 + 5, // 5-20 units
+                topSpeed: Math.random() * 30 + 10,
+                averageSpeed: Math.random() * 15 + 5,
             };
-             // Add wave creation to the batch using the subcollection ref
-             const waveDocRef = doc(wavesSubCollectionRef); // Auto-generate ID for the wave doc
-             batch.set(waveDocRef, newWaveData);
+            const waveDocRef = doc(wavesSubCollectionRef);
+            batch.set(waveDocRef, newWaveData);
         }
-
-        // 4. Update the session document with the calculated totalDuration in the same batch
         batch.update(sessionRef, { totalDuration: totalDuration });
-
-        // 5. Commit the batch
         await batch.commit();
-        console.log("Waves subcollection and session update committed.");
-
-
         Alert.alert("Success", "Fake session and waves added!");
-        fetchSessions(); // Refresh the list
-
+        fetchSessions();
     } catch (error) {
         console.error("Error adding fake session: ", error);
         Alert.alert("Error", "Could not add fake session.");
     } finally {
-         setAdding(false);
+        setAdding(false);
     }
   };
 
-  // Render item for FlatList
-  const renderSessionCard = ({ item }: { item: Session }) => (
-    <TouchableOpacity
-      style={styles.card}
-      onPress={() => {
-          if (item.id) {
-            navigation.navigate('SessionDetail', {
-              sessionId: item.id,
-              sessionLocation: item.location // Pass location for the header
-            });
-          } else {
-            Alert.alert("Error", "Session ID is missing, cannot navigate.");
-          }
-      }}
-    >
-      <Text style={styles.cardTitle}>{item.location}</Text>
-      <Text>Date: {item.sessionDate.toDate().toLocaleDateString()}</Text>
-      <Text>Waves: {item.waveCount}</Text>
-      <Text>Total Wave Time: {(item.totalDuration / 60).toFixed(1)} min</Text>
-    </TouchableOpacity>
+  const handleFilterPress = () => {
+      Alert.alert("Filter", "Filter functionality not implemented yet.");
+  };
+
+  // Navigate to Detail Screen function
+  const navigateToDetail = (session: Session) => {
+      if (session.id) {
+          navigation.navigate('SessionDetail', {
+              sessionId: session.id,
+              sessionLocation: session.location
+          });
+      } else {
+          Alert.alert("Error", "Session ID is missing, cannot navigate.");
+      }
+  };
+
+  // Render item using the new SessionCard component
+  const renderSessionItem = ({ item }: { item: Session }) => (
+    <SessionCard
+      session={item}
+      onPress={() => navigateToDetail(item)}
+    />
   );
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Surf Sessions</Text>
-
-       <Button
-          title={adding ? "Adding..." : "Add Fake Session"}
-          onPress={addFakeSession}
-          disabled={adding || !currentUser} // Disable if adding or not logged in
-        />
-
+    <View style={styles.screenContainer}>
+      <SessionsHeader
+          onAddPress={addFakeSession}
+          onFilterPress={handleFilterPress}
+          isAdding={adding}
+      />
       {loading ? (
         <ActivityIndicator size="large" style={styles.loader} />
       ) : (
         <FlatList
           data={sessions}
-          renderItem={renderSessionCard}
+          renderItem={renderSessionItem}
           keyExtractor={(item) => item.id!} // Use Firestore ID as key
           style={styles.list}
+          contentContainerStyle={styles.listContentContainer} // Add padding for header
           ListEmptyComponent={<Text style={styles.emptyText}>No sessions recorded yet. Add one!</Text>}
         />
       )}
@@ -203,49 +234,84 @@ const SessionsScreen = () => {
   );
 };
 
+// --- Styles ---
 const styles = StyleSheet.create({
-  container: {
+  screenContainer: {
     flex: 1,
-    // justifyContent: 'center', // Removed to allow list to fill space
+    backgroundColor: colors.background,
+  },
+  // Header Styles
+  headerContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingTop: Platform.OS === 'ios' ? 50 : 25,
+    paddingBottom: 10,
+    borderBottomWidth: Platform.OS === 'ios' ? 0 : 0.5, // Optional border for android
+    borderBottomColor: 'rgba(0,0,0,0.1)',
+    // BlurView handles background
+  },
+  headerContent: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingTop: 20, // Add some padding at the top
-     paddingHorizontal: 10,
+    justifyContent: 'space-between',
+    paddingHorizontal: 15,
   },
-  title: {
-    fontSize: 24,
-     marginBottom: 15,
+  headerButtonCircle: {
+    backgroundColor: colors.primaryBlue,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    // Shadow
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
   },
-   loader: {
-    marginTop: 50,
+   headerButtonCircleSmall: {
+    backgroundColor: colors.cardBackground,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 3,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.15,
+    shadowRadius: 2,
+  },
+  headerTitle: {
+    fontSize: 24, // Reduced font size from 28
+    fontWeight: 'bold',
+    color: colors.textPrimary,
+  },
+  // List Styles
+  loader: {
+    flex: 1, // Take remaining space
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   list: {
-    width: '100%', // Ensure list takes full width
-    marginTop: 15,
+    flex: 1,
+    width: '100%',
   },
-  card: {
-    backgroundColor: '#fff',
-    padding: 15,
-    marginVertical: 8,
-    borderRadius: 8,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.23,
-    shadowRadius: 2.62,
-    elevation: 4,
-  },
-  cardTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 5,
-  },
-   emptyText: {
+   listContentContainer: {
+       paddingTop: 100, // Adjust based on final header height
+       paddingBottom: 20, // Space at the bottom
+   },
+  emptyText: {
     marginTop: 40,
     textAlign: 'center',
     color: 'grey',
+    fontSize: 16,
   },
+  // Remove old card styles as they are now in SessionCard.tsx
 });
 
 export default SessionsScreen; 
