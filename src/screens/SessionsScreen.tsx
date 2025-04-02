@@ -20,6 +20,11 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import SessionCard from '../components/SessionCard';
 
 // Interfaces (can be moved to types file)
+interface GeoPoint {
+    latitude: number;
+    longitude: number;
+}
+
 interface Wave {
   id?: string;
   startTime: Timestamp;
@@ -27,6 +32,7 @@ interface Wave {
   duration: number;
   topSpeed: number;
   averageSpeed: number;
+  coordinates: GeoPoint[]; // Added coordinates array
 }
 interface Session {
   id?: string;
@@ -35,6 +41,9 @@ interface Session {
   sessionDate: Timestamp;
   waveCount: number;
   totalDuration: number;
+  // Add base coordinates for map centering
+  startLatitude: number;
+  startLongitude: number;
 }
 
 // Define colors (reuse from HomeScreen or centralize)
@@ -85,6 +94,18 @@ const SessionsHeader = ({ onAddPress, onFilterPress, isAdding }: SessionsHeaderP
     </View>
   </BlurView>
 );
+
+// --- Predefined Surf Spots --- (Coordinates approx. in the water near the break)
+const surfSpots = [
+  { name: "Steamer Lane", latitude: 36.9558, longitude: -122.0245 },
+  { name: "Ocean Beach, SF", latitude: 37.7570, longitude: -122.5107 },
+  { name: "Mavericks", latitude: 37.4945, longitude: -122.5010 },
+  { name: "Huntington Beach Pier", latitude: 33.6535, longitude: -118.0000 },
+  { name: "Trestles (Uppers)", latitude: 33.3850, longitude: -117.5890 },
+  { name: "Pipeline, Oahu", latitude: 21.6640, longitude: -158.0535 },
+  { name: "Waikiki Beach", latitude: 21.2750, longitude: -157.8300 },
+];
+// -----------------------------
 
 // --- SessionsScreen Implementation ---
 
@@ -139,45 +160,82 @@ const SessionsScreen = () => {
     }
   }, [currentUser, fetchSessions]);
 
-  // Add Fake Session (same logic, triggered by header button)
+  // Add Fake Session
   const addFakeSession = async () => {
     if (!currentUser) {
         Alert.alert("Error", "You must be logged in to add a session.");
         return;
     }
     setAdding(true);
+
+    // --- Select Random Surf Spot --- 
+    const randomSpotIndex = Math.floor(Math.random() * surfSpots.length);
+    const selectedSpot = surfSpots[randomSpotIndex];
+    const baseLatitude = selectedSpot.latitude + (Math.random() - 0.5) * 0.002; // Add slight variation
+    const baseLongitude = selectedSpot.longitude + (Math.random() - 0.5) * 0.002;
+    const locationName = selectedSpot.name;
+    // -------------------------------
+
     try {
         const sessionDate = Timestamp.now();
-        const waveCount = Math.floor(Math.random() * 10) + 3;
+        const waveCount = Math.floor(Math.random() * 5) + 2;
         let totalDuration = 0;
+
         const newSessionData: Omit<Session, 'id'> = {
             userId: currentUser.uid,
-            location: `Fake Beach ${Math.floor(Math.random() * 10)}`,
+            location: locationName, // Use selected spot name
             sessionDate: sessionDate,
             waveCount: waveCount,
             totalDuration: 0,
+            startLatitude: baseLatitude, // Use selected spot coords (with variation)
+            startLongitude: baseLongitude,
         };
         const sessionRef = await addDoc(collection(db, "sessions"), newSessionData);
+
         const batch = writeBatch(db);
         const wavesSubCollectionRef = collection(db, "sessions", sessionRef.id, "waves");
+
         for (let i = 0; i < waveCount; i++) {
-            const duration = Math.floor(Math.random() * 45) + 5;
+            const duration = Math.floor(Math.random() * 15) + 5;
             const startTime = Timestamp.fromMillis(sessionDate.toMillis() + i * 60000 + Math.random() * 5000);
             const endTime = Timestamp.fromMillis(startTime.toMillis() + duration * 1000);
             totalDuration += duration;
+
+            // --- Generate Fake Coordinates Relative to Spot ---
+            const waveCoordinates: GeoPoint[] = [];
+            const pointsCount = duration * 2;
+            const startLatOffset = (Math.random() - 0.5) * 0.001;
+            const startLonOffset = (Math.random() - 0.5) * 0.001;
+            // Start slightly further out from the base spot location
+            const waveStartLat = baseLatitude + 0.0015 + startLatOffset;
+            const waveStartLon = baseLongitude + startLonOffset;
+            // End closer to the base spot location
+            const waveEndLat = baseLatitude - 0.0003 + (Math.random() - 0.5) * 0.0003;
+            const waveEndLon = baseLongitude + (Math.random() - 0.5) * 0.0003;
+
+            for (let p = 0; p < pointsCount; p++) {
+                const progress = p / (pointsCount - 1);
+                const lat = waveStartLat + (waveEndLat - waveStartLat) * progress + (Math.random() - 0.5) * 0.00005;
+                const lon = waveStartLon + (waveEndLon - waveStartLon) * progress + (Math.random() - 0.5) * 0.00005;
+                waveCoordinates.push({ latitude: lat, longitude: lon });
+            }
+            // --------------------------------------------------
+
             const newWaveData: Omit<Wave, 'id'> = {
                 startTime: startTime,
                 endTime: endTime,
                 duration: duration,
-                topSpeed: Math.random() * 30 + 10,
-                averageSpeed: Math.random() * 15 + 5,
+                topSpeed: Math.random() * 20 + 10,
+                averageSpeed: Math.random() * 10 + 5,
+                coordinates: waveCoordinates,
             };
             const waveDocRef = doc(wavesSubCollectionRef);
             batch.set(waveDocRef, newWaveData);
         }
         batch.update(sessionRef, { totalDuration: totalDuration });
         await batch.commit();
-        Alert.alert("Success", "Fake session and waves added!");
+
+        Alert.alert("Success", `Fake session at ${locationName} added!`);
         fetchSessions();
     } catch (error) {
         console.error("Error adding fake session: ", error);

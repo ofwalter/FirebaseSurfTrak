@@ -9,6 +9,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Timestamp } from 'firebase/firestore';
+import MapView, { Marker } from 'react-native-maps';
 
 // Re-use Session interface (Consider moving to a shared types file later)
 interface Session {
@@ -95,14 +96,33 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
         </View>
       </LinearGradient>
 
-      {/* Right Side - Map Placeholder */}
+      {/* Right Side - Map Preview */}
       <View style={styles.rightSide}>
-         {/* Map Marker Icon */}
-         <View style={styles.mapMarkerCircle}>
+         {/* MapView replaces the placeholder */}
+         <MapView
+            style={styles.mapPreview}
+            initialRegion={{
+              // Placeholder region - replace with actual session coords later
+              latitude: 34.0522, // Los Angeles Example
+              longitude: -118.2437,
+              latitudeDelta: 0.04, // Zoom level
+              longitudeDelta: 0.05,
+            }}
+            scrollEnabled={false}
+            zoomEnabled={false}
+            pitchEnabled={false}
+            rotateEnabled={false}
+         >
+             {/* Optional: Add a single marker for the session location */}
+              <Marker
+                coordinate={{ latitude: 34.0522, longitude: -118.2437 }}
+                // You could use a custom marker image/icon here later
+              />
+         </MapView>
+          {/* Map Marker Icon - maybe remove this if map shows location */}
+         {/* <View style={styles.mapMarkerCircle}>
              <Ionicons name="location-sharp" size={16} color={colors.primaryBlue} />
-         </View>
-         {/* Map Placeholder Icon */}
-         <Ionicons name="map-outline" size={48} color={colors.mapIcon} style={styles.mapIcon} />
+         </View> */}
       </View>
     </TouchableOpacity>
   );
@@ -130,10 +150,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   rightSide: {
-    flex: 1, // Takes up less space
+    flex: 1,
     backgroundColor: colors.mapBackground,
-    alignItems: 'center',
-    justifyContent: 'center',
+    // alignItems/justifyContent removed as MapView fills the space
     position: 'relative',
   },
   locationText: {
@@ -166,21 +185,26 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: colors.white,
   },
-   mapMarkerCircle: {
+  mapPreview: {
+      ...StyleSheet.absoluteFillObject, // Make map fill the rightSide container
+  },
+  mapMarkerCircle: {
+     // Style might be removed or kept depending on final design
     position: 'absolute',
     top: 10,
     right: 10,
     backgroundColor: colors.white,
     borderRadius: 15,
     padding: 5,
-    elevation: 3, // Add shadow to marker circle
+    zIndex: 1, // Ensure it's above map
+    elevation: 3,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.2,
     shadowRadius: 2,
    },
    mapIcon: {
-       opacity: 0.6, // Make map icon slightly transparent
+       // Removed as MapView is used now
    },
 });
 

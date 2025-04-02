@@ -127,7 +127,11 @@ const AppStackNavigator = () => {
         name="SessionDetail"
         component={SessionDetailScreen}
         // Options can set the header title dynamically based on route params
-        options={({ route }) => ({ title: `${route.params.sessionLocation} Details` })}
+        options={({ route }) => ({
+          title: `${route.params.sessionLocation} Details`,
+          headerBackTitle: "Back", // Set custom back button text
+          // Or use headerBackTitleVisible: false to hide text completely
+        })}
       />
       {/* Add other stack screens here if needed */}
     </AppStack.Navigator>
