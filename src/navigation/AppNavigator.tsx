@@ -3,11 +3,19 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../services/firebaseConfig';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import Ionicons from 'react-native-vector-icons/Ionicons'; // Import icon library
 
 import LoginScreen from '../screens/LoginScreen';
 import SignupScreen from '../screens/SignupScreen';
 import HomeScreen from '../screens/HomeScreen';
 import { ActivityIndicator, View } from 'react-native';
+
+// Import new screens
+import SessionsScreen from '../screens/SessionsScreen';
+import ForecastScreen from '../screens/ForecastScreen';
+import ProfileScreen from '../screens/ProfileScreen';
+import SessionDetailScreen from '../screens/SessionDetailScreen'; // Import the new detail screen
 
 // Define Stack types
 type AuthStackParamList = {
@@ -15,13 +23,24 @@ type AuthStackParamList = {
   Signup: undefined;
 };
 
-type AppStackParamList = {
+// Define Tab types (used within the App Stack)
+type AppTabParamList = {
   Home: undefined;
-  // Add other app screens here
+  Sessions: undefined; // This now refers to the initial Sessions screen in the tab
+  Forecast: undefined;
+  Profile: undefined;
+};
+
+// Define the main App Stack, including Tabs and Detail screens
+export type AppStackParamList = {
+  AppTabs: undefined; // Represents the entire Bottom Tab Navigator
+  SessionDetail: { sessionId: string; sessionLocation: string }; // Screen for session details
+  // Add other non-tab screens here (e.g., Settings, Edit Profile)
 };
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
-const AppStack = createNativeStackNavigator<AppStackParamList>();
+const AppTabs = createBottomTabNavigator<AppTabParamList>();
+const AppStack = createNativeStackNavigator<AppStackParamList>(); // The main stack for the authenticated app
 
 // Create an Auth Context
 interface AuthContextType {
@@ -65,18 +84,65 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
-// Main Navigator Logic
+// Tab Navigator Component - Stays mostly the same
+const AppTabNavigator = () => {
+  return (
+    <AppTabs.Navigator
+      screenOptions={({ route }) => ({
+        tabBarIcon: ({ focused, color, size }) => {
+          let iconName: string = '';
+          if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
+          else if (route.name === 'Sessions') iconName = focused ? 'water' : 'water-outline';
+          else if (route.name === 'Forecast') iconName = focused ? 'sunny' : 'sunny-outline';
+          else if (route.name === 'Profile') iconName = focused ? 'person-circle' : 'person-circle-outline';
+          return <Ionicons name={iconName} size={size} color={color} />;
+        },
+        tabBarActiveTintColor: 'tomato',
+        tabBarInactiveTintColor: 'gray',
+        // Header should be shown by the parent Stack Navigator now
+        headerShown: false, // <- Important: Hide headers within Tabs
+      })}
+    >
+      {/* Tab Screens - Note: Titles set here might be overridden by Stack Navigator */}
+      <AppTabs.Screen name="Home" component={HomeScreen} />
+      <AppTabs.Screen name="Sessions" component={SessionsScreen} />
+      <AppTabs.Screen name="Forecast" component={ForecastScreen} />
+      <AppTabs.Screen name="Profile" component={ProfileScreen} />
+    </AppTabs.Navigator>
+  );
+};
+
+// New: Main App Stack Navigator Component
+const AppStackNavigator = () => {
+  return (
+    <AppStack.Navigator>
+      {/* The entire Tab navigator is nested as a single screen */}
+      <AppStack.Screen
+        name="AppTabs"
+        component={AppTabNavigator} // Use the Tab navigator component
+        options={{ headerShown: false }} // Hide the stack header for the tab screen itself
+      />
+      {/* The Session Detail screen is a separate screen in the stack */}
+      <AppStack.Screen
+        name="SessionDetail"
+        component={SessionDetailScreen}
+        // Options can set the header title dynamically based on route params
+        options={({ route }) => ({ title: `${route.params.sessionLocation} Details` })}
+      />
+      {/* Add other stack screens here if needed */}
+    </AppStack.Navigator>
+  );
+};
+
+// Main Navigator Logic - Update to use AppStackNavigator
 const AppNavigator = () => {
   const { user } = useAuth();
 
   return (
     <NavigationContainer>
       {user ? (
-        // User is logged in
-        <AppStack.Navigator>
-          <AppStack.Screen name="Home" component={HomeScreen} options={{ title: 'SurfTrackr' }} />
-          {/* Add other authenticated screens here */}
-        </AppStack.Navigator>
+        // User is logged in - show the MAIN App Stack Navigator
+        <AppStackNavigator />
       ) : (
         // User is not logged in
         <AuthStack.Navigator screenOptions={{ headerShown: false }}>
