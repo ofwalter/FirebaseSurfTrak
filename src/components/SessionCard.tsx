@@ -1,36 +1,49 @@
-import React from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { Timestamp } from 'firebase/firestore';
-import MapView, { Marker } from 'react-native-maps';
+import { Timestamp, collection, getDocs } from 'firebase/firestore';
+import MapView, { Polyline } from 'react-native-maps';
+import { db } from '../services/firebaseConfig';
 
 // Re-use Session interface (Consider moving to a shared types file later)
+interface GeoPoint {
+    latitude: number;
+    longitude: number;
+}
 interface Session {
-  id?: string;
+  id: string; // Ensure ID is always present for fetching subcollection
   userId: string;
   location: string;
   sessionDate: Timestamp;
   waveCount: number;
   totalDuration: number; // seconds
+  // Optional: Add startLatitude/Longitude if needed for initial map centering
+  // startLatitude?: number;
+  // startLongitude?: number;
 }
 
 // Define colors (could also import from a central constants file)
 const colors = {
   primaryBlue: '#1A73E8',
+  primaryBlueRGBA: 'rgba(26, 115, 232, 0.7)', // Added for polyline
   secondaryBlue: '#0056B3',
   lightBlue: '#4AB1FF',
-  mapBackground: '#dbeafe', // Light blue-gray for map placeholder
+  mapBackground: '#eef2f7', // Slightly lighter map background
   mapIcon: '#60a5fa', // Slightly darker blue for map icons
   textPrimary: '#1f2937',
   textSecondary: '#6b7280',
   white: '#ffffff',
+  pathAqua: '#00C8C8',
+  pathAquaRGBA: 'rgba(0, 200, 200, 0.8)',
+  markerAqua: '#00A0A0',
 };
 
 // Helper to format duration (seconds) into Hh Mm
@@ -63,6 +76,24 @@ const formatDateAndTime = (timestamp: Timestamp): { date: string; timeRange: str
   };
 };
 
+// Simple Path Smoothing Function
+const smoothPath = (path: GeoPoint[], windowSize: number = 3): GeoPoint[] => {
+  if (!path || path.length < windowSize) return path;
+  const smoothed: GeoPoint[] = [path[0]];
+  const halfWindow = Math.floor(windowSize / 2);
+  for (let i = 1; i < path.length - 1; i++) {
+    const start = Math.max(0, i - halfWindow);
+    const end = Math.min(path.length - 1, i + halfWindow);
+    let sumLat = 0, sumLon = 0, count = 0;
+    for (let j = start; j <= end; j++) {
+      sumLat += path[j].latitude; sumLon += path[j].longitude; count++;
+    }
+    smoothed.push(count > 0 ? { latitude: sumLat / count, longitude: sumLon / count } : path[i]);
+  }
+  smoothed.push(path[path.length - 1]);
+  return smoothed;
+};
+
 interface SessionCardProps {
   session: Session;
   onPress: () => void;
@@ -71,6 +102,54 @@ interface SessionCardProps {
 const SessionCard = ({ session, onPress }: SessionCardProps) => {
   const { date, timeRange } = formatDateAndTime(session.sessionDate);
   const durationFormatted = formatDuration(session.totalDuration);
+  const mapViewRef = useRef<MapView>(null);
+  const [rawCoordinates, setRawCoordinates] = useState<GeoPoint[]>([]);
+  const [mapLoading, setMapLoading] = useState(true);
+
+  // Effect to fetch wave coordinates for the map preview
+  useEffect(() => {
+    const fetchCoords = async () => {
+      if (!session.id) return;
+      setMapLoading(true);
+      try {
+        const wavesQuery = collection(db, 'sessions', session.id, 'waves');
+        const querySnapshot = await getDocs(wavesQuery);
+        const allCoords: GeoPoint[] = [];
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.coordinates && Array.isArray(data.coordinates)) {
+            allCoords.push(...data.coordinates);
+          }
+        });
+        setRawCoordinates(allCoords);
+      } catch (error) {
+        console.error(`Error fetching coordinates for session ${session.id}:`, error);
+        // Handle error state if needed, maybe show a placeholder/error icon on map
+        setRawCoordinates([]); // Clear coords on error
+      } finally {
+        setMapLoading(false);
+      }
+    };
+
+    fetchCoords();
+  }, [session.id]);
+
+  // Memoize the smoothed coordinates
+  const smoothedWaveCoordinates = useMemo(() => {
+      return smoothPath(rawCoordinates);
+  }, [rawCoordinates]);
+
+  // Effect to fit map to coordinates once loaded
+  useEffect(() => {
+    if (!mapLoading && smoothedWaveCoordinates.length > 1 && mapViewRef.current) {
+      setTimeout(() => {
+          mapViewRef.current?.fitToCoordinates(smoothedWaveCoordinates, {
+              edgePadding: { top: 15, right: 15, bottom: 15, left: 15 },
+              animated: false,
+          });
+      }, 200);
+    }
+  }, [mapLoading, smoothedWaveCoordinates]);
 
   return (
     <TouchableOpacity style={styles.cardContainer} onPress={onPress} activeOpacity={0.8}>
@@ -98,31 +177,42 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
 
       {/* Right Side - Map Preview */}
       <View style={styles.rightSide}>
-         {/* MapView replaces the placeholder */}
          <MapView
+            ref={mapViewRef}
             style={styles.mapPreview}
-            initialRegion={{
-              // Placeholder region - replace with actual session coords later
-              latitude: 34.0522, // Los Angeles Example
-              longitude: -118.2437,
-              latitudeDelta: 0.04, // Zoom level
-              longitudeDelta: 0.05,
-            }}
+            mapType="satellite"
             scrollEnabled={false}
             zoomEnabled={false}
             pitchEnabled={false}
             rotateEnabled={false}
+            showsUserLocation={false}
+            showsMyLocationButton={false}
          >
-             {/* Optional: Add a single marker for the session location */}
-              <Marker
-                coordinate={{ latitude: 34.0522, longitude: -118.2437 }}
-                // You could use a custom marker image/icon here later
-              />
+            {!mapLoading && smoothedWaveCoordinates.length > 1 && (
+                <Polyline
+                    coordinates={smoothedWaveCoordinates}
+                    strokeColor={colors.pathAquaRGBA}
+                    strokeWidth={2}
+                    zIndex={2}
+                />
+            )}
          </MapView>
-          {/* Map Marker Icon - maybe remove this if map shows location */}
-         {/* <View style={styles.mapMarkerCircle}>
-             <Ionicons name="location-sharp" size={16} color={colors.primaryBlue} />
-         </View> */}
+
+         {/* Blending Gradient Overlay */}
+         <LinearGradient
+            colors={['rgba(26, 115, 232, 0.3)', 'transparent']}
+            style={styles.blendingGradient}
+            start={{ x: 0, y: 0.5 }}
+            end={{ x: 0.8, y: 0.5 }}
+            pointerEvents="none"
+         />
+
+         {/* Loading indicator for map */}
+         {mapLoading && (
+             <View style={styles.mapLoadingOverlay}>
+                 <ActivityIndicator size="small" color={colors.primaryBlue} />
+             </View>
+         )}
       </View>
     </TouchableOpacity>
   );
@@ -136,7 +226,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white, // Background for shadow
     marginVertical: 10,
     marginHorizontal: 15,
-    minHeight: 130, // Ensure consistent height
+    minHeight: 140, // Slightly increased minHeight for more map space
     // Shadow
     elevation: 5,
     shadowColor: '#000',
@@ -145,15 +235,15 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   leftSide: {
-    flex: 2, // Takes up more space
+    flex: 2, // Reduced flex
     padding: 15,
     justifyContent: 'space-between',
   },
   rightSide: {
-    flex: 1,
+    flex: 3, 
     backgroundColor: colors.mapBackground,
-    // alignItems/justifyContent removed as MapView fills the space
     position: 'relative',
+    overflow: 'hidden',
   },
   locationText: {
     fontSize: 18,
@@ -186,26 +276,22 @@ const styles = StyleSheet.create({
     color: colors.white,
   },
   mapPreview: {
-      ...StyleSheet.absoluteFillObject, // Make map fill the rightSide container
+      ...StyleSheet.absoluteFillObject,
   },
-  mapMarkerCircle: {
-     // Style might be removed or kept depending on final design
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: colors.white,
-    borderRadius: 15,
-    padding: 5,
-    zIndex: 1, // Ensure it's above map
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-   },
-   mapIcon: {
+  blendingGradient: {
+      ...StyleSheet.absoluteFillObject,
+      zIndex: 1,
+  },
+  mapLoadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(238, 242, 247, 0.6)', // Semi-transparent background
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 3,
+  },
+  mapIcon: {
        // Removed as MapView is used now
-   },
+  },
 });
 
 export default SessionCard; 
