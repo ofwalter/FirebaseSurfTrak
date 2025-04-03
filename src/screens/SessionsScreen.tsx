@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -8,11 +8,13 @@ import {
   TouchableOpacity,
   Alert,
   Platform,
+  Modal,
+  SafeAreaView,
 } from 'react-native';
 import { db, auth } from '../services/firebaseConfig';
-import { collection, addDoc, query, where, getDocs, Timestamp, doc, writeBatch } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, Timestamp, doc, writeBatch, orderBy } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useIsFocused } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AppStackParamList } from '../navigation/AppNavigator';
 import { BlurView } from 'expo-blur';
@@ -34,8 +36,10 @@ interface Wave {
   averageSpeed: number;
   coordinates: GeoPoint[]; // Added coordinates array
 }
+
+// Define Session interface locally (ensure ID is required)
 interface Session {
-  id?: string;
+  id: string; // Changed from id? to id
   userId: string;
   location: string;
   sessionDate: Timestamp;
@@ -45,6 +49,9 @@ interface Session {
   startLatitude: number;
   startLongitude: number;
 }
+
+// Define SortCriteria type outside the component
+type SortCriteria = 'latest' | 'oldest' | 'spot_az' | 'most_waves';
 
 // Define colors (reuse from HomeScreen or centralize)
 const colors = {
@@ -56,6 +63,8 @@ const colors = {
   textPrimary: '#1f2937',
   textSecondary: '#6b7280',
   white: '#ffffff',
+  backgroundLight: '#f8f9fa',
+  borderLight: '#e5e7eb',
 };
 
 type SessionsScreenNavigationProp = NativeStackNavigationProp<AppStackParamList, 'AppTabs'>;
@@ -63,37 +72,42 @@ type SessionsScreenNavigationProp = NativeStackNavigationProp<AppStackParamList,
 // --- Header Component ---
 interface SessionsHeaderProps {
   onAddPress: () => void;
-  onFilterPress: () => void; // Placeholder for filter action
-  isAdding: boolean; // To disable add button while processing
+  onFilterPress: () => void;
+  onRefreshPress: () => void;
+  isAdding: boolean;
 }
 
-const SessionsHeader = ({ onAddPress, onFilterPress, isAdding }: SessionsHeaderProps) => (
-  <BlurView intensity={80} tint="light" style={styles.headerContainer}>
-    <View style={styles.headerContent}>
-      {/* Add Button */}
-      <TouchableOpacity
-        style={styles.headerButtonCircle}
-        onPress={onAddPress}
-        disabled={isAdding}
-        activeOpacity={0.7}
-      >
-        <Ionicons name="add" size={30} color={colors.white} />
-      </TouchableOpacity>
+// Revert to a structure that allows better centering and button styling
+const SessionsHeader = ({ onAddPress, onFilterPress, onRefreshPress, isAdding }: SessionsHeaderProps) => {
+    return (
+        <View style={styles.headerContainer}> 
+            {/* Left Button (Add) */}
+            <View style={styles.headerSideContainer}> 
+                 <TouchableOpacity style={styles.addButtonCircle} onPress={onAddPress} disabled={isAdding} activeOpacity={0.7}>
+                    {isAdding 
+                        ? <ActivityIndicator color="#fff"/> 
+                        : <Ionicons name="add" size={30} color="#fff" /> // Use simple add icon
+                    } 
+                 </TouchableOpacity>
+            </View>
 
-      {/* Title */}
-      <Text style={styles.headerTitle}>Sessions</Text>
+            {/* Centered Title */}
+            <View style={styles.headerTitleContainer}>
+                <Text style={styles.headerTitle}>Sessions</Text>
+            </View>
 
-      {/* Filter Button */}
-      <TouchableOpacity
-        style={styles.headerButtonCircleSmall}
-        onPress={onFilterPress}
-        activeOpacity={0.7}
-      >
-        <Ionicons name="filter-outline" size={20} color={colors.primaryBlue} />
-      </TouchableOpacity>
-    </View>
-  </BlurView>
-);
+            {/* Right Buttons (Refresh, Filter) */}
+             <View style={[styles.headerSideContainer, styles.headerRightButtons]}>
+                 <TouchableOpacity style={styles.headerIconButton} onPress={onRefreshPress}> 
+                     <Ionicons name="refresh-outline" size={26} color={colors.primaryBlue} />
+                 </TouchableOpacity>
+                 <TouchableOpacity style={styles.headerIconButton} onPress={onFilterPress}> 
+                     <Ionicons name="filter-outline" size={26} color={colors.primaryBlue} />
+                 </TouchableOpacity>
+             </View>
+        </View>
+    );
+};
 
 // --- Predefined Surf Spots --- (Coordinates approx. in the water near the break)
 const surfSpots = [
@@ -111,10 +125,13 @@ const surfSpots = [
 
 const SessionsScreen = () => {
   const navigation = useNavigation<SessionsScreenNavigationProp>();
+  const isFocused = useIsFocused();
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [sortCriteria, setSortCriteria] = useState<SortCriteria>('latest');
+  const [isSortModalVisible, setIsSortModalVisible] = useState(false);
 
   // Get current user (same as before)
   useEffect(() => {
@@ -159,6 +176,23 @@ const SessionsScreen = () => {
         fetchSessions();
     }
   }, [currentUser, fetchSessions]);
+
+  // Memoize the sorted sessions
+  const sortedSessions = useMemo(() => {
+    const sessionsCopy = [...sessions]; // Create a copy to avoid mutating original state
+    switch (sortCriteria) {
+      case 'latest':
+        return sessionsCopy.sort((a, b) => b.sessionDate.seconds - a.sessionDate.seconds);
+      case 'oldest':
+        return sessionsCopy.sort((a, b) => a.sessionDate.seconds - b.sessionDate.seconds);
+      case 'spot_az':
+        return sessionsCopy.sort((a, b) => a.location.localeCompare(b.location));
+      case 'most_waves':
+        return sessionsCopy.sort((a, b) => b.waveCount - a.waveCount);
+      default:
+        return sessionsCopy;
+    }
+  }, [sessions, sortCriteria]);
 
   // Add Fake Session
   const addFakeSession = async () => {
@@ -245,8 +279,9 @@ const SessionsScreen = () => {
     }
   };
 
-  const handleFilterPress = () => {
-      Alert.alert("Filter", "Filter functionality not implemented yet.");
+  const handleSelectSort = (criteria: SortCriteria) => {
+    setSortCriteria(criteria);
+    setIsSortModalVisible(false);
   };
 
   // Navigate to Detail Screen function
@@ -273,21 +308,50 @@ const SessionsScreen = () => {
     <View style={styles.screenContainer}>
       <SessionsHeader
           onAddPress={addFakeSession}
-          onFilterPress={handleFilterPress}
+          onFilterPress={() => setIsSortModalVisible(true)}
+          onRefreshPress={fetchSessions}
           isAdding={adding}
       />
       {loading ? (
         <ActivityIndicator size="large" style={styles.loader} />
       ) : (
         <FlatList
-          data={sessions}
+          data={sortedSessions}
           renderItem={renderSessionItem}
-          keyExtractor={(item) => item.id!} // Use Firestore ID as key
+          keyExtractor={(item) => item.id}
           style={styles.list}
-          contentContainerStyle={styles.listContentContainer} // Add padding for header
+          contentContainerStyle={styles.listContentContainer}
           ListEmptyComponent={<Text style={styles.emptyText}>No sessions recorded yet. Add one!</Text>}
         />
       )}
+
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={isSortModalVisible}
+        onRequestClose={() => setIsSortModalVisible(false)}
+      >
+        <SafeAreaView style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Sort By</Text>
+            <TouchableOpacity style={styles.sortOptionButton} onPress={() => handleSelectSort('latest')}>
+              <Text style={styles.sortOptionText}>Latest</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.sortOptionButton} onPress={() => handleSelectSort('oldest')}>
+              <Text style={styles.sortOptionText}>Oldest</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.sortOptionButton} onPress={() => handleSelectSort('spot_az')}>
+              <Text style={styles.sortOptionText}>Spot (A-Z)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.sortOptionButton} onPress={() => handleSelectSort('most_waves')}>
+              <Text style={styles.sortOptionText}>Most Waves</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={[styles.sortOptionButton, styles.cancelButton]} onPress={() => setIsSortModalVisible(false)}>
+              <Text style={[styles.sortOptionText, styles.cancelButtonText]}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </View>
   );
 };
@@ -296,62 +360,54 @@ const SessionsScreen = () => {
 const styles = StyleSheet.create({
   screenContainer: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.backgroundLight || '#f8f9fa',
   },
-  // Header Styles
   headerContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    paddingTop: Platform.OS === 'ios' ? 50 : 25,
-    paddingBottom: 10,
-    borderBottomWidth: Platform.OS === 'ios' ? 0 : 0.5, // Optional border for android
-    borderBottomColor: 'rgba(0,0,0,0.1)',
-    // BlurView handles background
-  },
-  headerContent: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 15,
+    paddingTop: Platform.OS === 'ios' ? 50 : 15,
+    paddingBottom: 15,
+    backgroundColor: colors.white,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.borderLight || '#e5e7eb',
   },
-  headerButtonCircle: {
-    backgroundColor: colors.primaryBlue,
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    // Shadow
-    elevation: 4,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
+  headerSideContainer: {
+    flex: 1,
   },
-   headerButtonCircleSmall: {
-    backgroundColor: colors.cardBackground,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  headerTitleContainer: {
+    flex: 2,
     alignItems: 'center',
-    justifyContent: 'center',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.15,
-    shadowRadius: 2,
   },
   headerTitle: {
-    fontSize: 24, // Reduced font size from 28
+    fontSize: 22,
     fontWeight: 'bold',
-    color: colors.textPrimary,
+    color: colors.textPrimary || '#1f2937',
   },
-  // List Styles
+  headerRightButtons: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+  },
+  addButtonCircle: {
+    backgroundColor: colors.primaryBlue,
+    borderRadius: 28,
+    width: 56,
+    height: 56,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  headerIconButton: {
+    padding: 10,
+    marginLeft: 10,
+  },
   loader: {
-    flex: 1, // Take remaining space
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -359,17 +415,61 @@ const styles = StyleSheet.create({
     flex: 1,
     width: '100%',
   },
-   listContentContainer: {
-       paddingTop: 100, // Adjust based on final header height
-       paddingBottom: 20, // Space at the bottom
-   },
+  listContentContainer: {
+    paddingTop: 10,
+    paddingBottom: 20,
+  },
   emptyText: {
     marginTop: 40,
     textAlign: 'center',
     color: 'grey',
     fontSize: 16,
   },
-  // Remove old card styles as they are now in SessionCard.tsx
+  sortButton: {
+    padding: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: 15,
+    padding: 20,
+    width: '80%',
+    alignItems: 'stretch',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+    color: '#1f2937',
+  },
+  sortOptionButton: {
+    paddingVertical: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e7eb',
+  },
+  sortOptionText: {
+    fontSize: 16,
+    textAlign: 'center',
+    color: '#1A73E8',
+  },
+  cancelButton: {
+    borderBottomWidth: 0,
+    marginTop: 10,
+  },
+  cancelButtonText: {
+    color: '#ef4444',
+  },
 });
 
 export default SessionsScreen; 

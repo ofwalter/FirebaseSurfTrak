@@ -133,7 +133,9 @@ const SessionDetailScreen = () => {
   const [waves, setWaves] = useState<Wave[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedWaveIndex, setSelectedWaveIndex] = useState(-1); // Start at -1 for Summary
+  const [selectedWaveIndex, setSelectedWaveIndex] = useState(-1);
+  const [mapDetailReady, setMapDetailReady] = useState(false);
+  const [mapRenderKey, setMapRenderKey] = useState(0);
 
   // Animated value for panel position
   const panelY = useRef(new Animated.Value(PANEL_DOWN_POSITION)).current;
@@ -208,6 +210,7 @@ const SessionDetailScreen = () => {
     const fetchSessionAndWaves = async () => {
       setLoading(true);
       setError(null);
+      setMapDetailReady(false); // Reset map ready state on new fetch
       try {
         if (!sessionId) throw new Error("Session ID is missing");
 
@@ -310,46 +313,51 @@ const SessionDetailScreen = () => {
 
   // --- Map Animation Effect ---
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!mapDetailReady || !mapRef.current) return;
     const isSummaryActive = selectedWaveIndex === -1;
-
     if (isSummaryActive) {
-        if (allRawCoordinates.length > 0) { // Fit to RAW coordinates for bounds
-             setTimeout(() => {
+        if (allRawCoordinates.length > 0) {
+            setTimeout(() => {
                 mapRef.current?.fitToCoordinates(allRawCoordinates, {
                     edgePadding: { top: 60, right: 60, bottom: screenHeight * 0.5, left: 60 },
                     animated: true,
                 });
-             }, 100);
+            }, 250);
         } else if (sessionData) {
              mapRef.current.animateToRegion(initialMapRegion, 1000);
         }
     } else {
         if (selectedWaveRaw?.coordinates && selectedWaveRaw.coordinates.length > 0) {
             setTimeout(() => {
-                // Fit to RAW coordinates for bounds
-                mapRef.current?.fitToCoordinates(selectedWaveRaw.coordinates, {
+                 mapRef.current?.fitToCoordinates(selectedWaveRaw.coordinates, {
                     edgePadding: { top: 50, right: 50, bottom: screenHeight * 0.5, left: 50 },
                     animated: true,
                 });
-            }, 100);
+            }, 250);
         } else if (sessionData) {
              mapRef.current.animateToRegion(initialMapRegion, 1000);
         }
     }
-  }, [selectedWaveIndex, selectedWaveRaw, allRawCoordinates, sessionData, initialMapRegion]);
+  }, [mapDetailReady, selectedWaveIndex, selectedWaveRaw, allRawCoordinates, sessionData, initialMapRegion, mapRenderKey]);
 
   // Handler for slider value change
   const handleSliderChange = (value: number) => {
-    setSelectedWaveIndex(Math.round(value));
+    const newIndex = Math.round(value);
+    setSelectedWaveIndex(newIndex);
+    // Increment the key to force MapView remount when index changes
+    setMapRenderKey(prevKey => prevKey + 1);
+    // Also reset map ready state, as it will remount
+    setMapDetailReady(false);
   };
 
+  // Return loading indicator first
   if (loading) {
     return <ActivityIndicator size="large" style={styles.fullScreenLoader} />;
   }
 
-  if (error) {
-    return <Text style={styles.errorText}>{error}</Text>;
+  // Check for sessionData AFTER loading is false
+  if (!sessionData) {
+    return <Text style={styles.errorText}>{error || "Session data could not be loaded."}</Text>;
   }
 
   const isSummaryActive = selectedWaveIndex === -1;
@@ -357,55 +365,67 @@ const SessionDetailScreen = () => {
   return (
     <View style={styles.screenContainer}>
       <MapView
+        key={mapRenderKey}
         ref={mapRef}
         style={styles.mapView}
         initialRegion={initialMapRegion}
-        mapType="satellite" // Set map type to satellite
+        mapType="satellite"
+        onMapReady={() => setMapDetailReady(true)}
       >
-         {/* Conditional Polylines - Use SMOOTHED coordinates */}
-         {isSummaryActive ? (
-             waves.map((wave, index) => {
-                const smoothedCoords = wave.coordinates ? smoothPath(wave.coordinates) : [];
-                return smoothedCoords.length > 1 && (
-                    <Polyline
-                        key={`wave-poly-${wave.id || index}`}
-                        coordinates={smoothedCoords}
-                        strokeColor={colors.pathAquaRGBA}
-                        strokeWidth={2.5} // Slightly thicker than card preview
-                        lineCap="round"
-                   />
-                );
-            })
-         ) : (
-             selectedWaveSmoothedCoords.length > 1 && (
-                 <Polyline
-                     coordinates={selectedWaveSmoothedCoords}
-                     strokeColor={colors.pathAquaRGBA}
-                     strokeWidth={3.5} // Thickest for selected wave
-                     lineCap="round"
-                />
-             )
+        {/* ---- Start: Render Polylines ---- */}
+
+        {/* 1. Summary Polylines */} 
+        {mapDetailReady && waves.map((wave, index) => {
+            const smoothedCoords = wave.coordinates ? smoothPath(wave.coordinates) : [];
+            return smoothedCoords.length > 1 && (
+                <Polyline
+                    key={`wave-summary-poly-${wave.id || index}`}
+                    coordinates={smoothedCoords}
+                    strokeColor={isSummaryActive ? colors.pathAquaRGBA : 'transparent'}
+                    strokeWidth={2.5}
+                    lineCap="round"
+                    zIndex={isSummaryActive ? 1 : 0}
+               />
+            );
+        })}
+
+        {/* 2. Selected Wave Polyline */} 
+        {mapDetailReady && selectedWaveSmoothedCoords.length > 1 && (
+             <Polyline
+                 key={`selected-wave-poly-${selectedWaveRaw?.id || selectedWaveIndex}`}
+                 coordinates={selectedWaveSmoothedCoords}
+                 strokeColor={!isSummaryActive ? colors.pathAquaRGBA : 'transparent'}
+                 strokeWidth={3.5}
+                 lineCap="round"
+                 zIndex={!isSummaryActive ? 2 : 0}
+            />
          )}
 
-         {/* Conditional Markers (Only for Wave View, index >= 0) - Use RAW coordinates */}
-         {!isSummaryActive && selectedWaveRaw?.coordinates && selectedWaveRaw.coordinates.length > 0 && (
+        {/* ---- End: Render Polylines ---- */}
+
+        {/* ---- Start: Render Markers (Conditional) ---- */}
+         {mapDetailReady && !isSummaryActive && selectedWaveRaw?.coordinates && selectedWaveRaw.coordinates.length > 0 && (
              <>
                  {/* Custom Start Marker */}
                  <Marker
                      coordinate={selectedWaveRaw.coordinates[0]}
-                     anchor={{ x: 0.5, y: 0.5 }} // Center the marker
+                     anchor={{ x: 0.5, y: 0.5 }}
+                     zIndex={3} // Ensure markers are on top
                  >
                     <View style={[styles.customMarker, { backgroundColor: colors.markerAqua }]} />
                  </Marker>
                  {/* Custom End Marker */}
                  <Marker
                      coordinate={selectedWaveRaw.coordinates[selectedWaveRaw.coordinates.length - 1]}
-                     anchor={{ x: 0.5, y: 0.5 }} // Center the marker
+                     anchor={{ x: 0.5, y: 0.5 }}
+                     zIndex={3} // Ensure markers are on top
                  >
                     <View style={[styles.customMarker, { backgroundColor: colors.markerAqua }]} />
                  </Marker>
              </>
          )}
+        {/* ---- End: Render Markers ---- */}
+
       </MapView>
 
       <Animated.View
@@ -428,7 +448,7 @@ const SessionDetailScreen = () => {
                          </Text>
                          <Slider
                             style={styles.slider}
-                            minimumValue={-1} // Start at -1 for Summary
+                            minimumValue={-1}
                             maximumValue={waves.length - 1}
                             step={1}
                             value={selectedWaveIndex}

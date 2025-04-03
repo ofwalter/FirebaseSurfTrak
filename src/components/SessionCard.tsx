@@ -105,12 +105,14 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
   const mapViewRef = useRef<MapView>(null);
   const [rawCoordinates, setRawCoordinates] = useState<GeoPoint[]>([]);
   const [mapLoading, setMapLoading] = useState(true);
+  const [mapReady, setMapReady] = useState(false);
 
   // Effect to fetch wave coordinates for the map preview
   useEffect(() => {
     const fetchCoords = async () => {
       if (!session.id) return;
       setMapLoading(true);
+      setMapReady(false);
       try {
         const wavesQuery = collection(db, 'sessions', session.id, 'waves');
         const querySnapshot = await getDocs(wavesQuery);
@@ -123,9 +125,7 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
         });
         setRawCoordinates(allCoords);
       } catch (error) {
-        console.error(`Error fetching coordinates for session ${session.id}:`, error);
-        // Handle error state if needed, maybe show a placeholder/error icon on map
-        setRawCoordinates([]); // Clear coords on error
+        setRawCoordinates([]);
       } finally {
         setMapLoading(false);
       }
@@ -141,15 +141,16 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
 
   // Effect to fit map to coordinates once loaded
   useEffect(() => {
-    if (!mapLoading && smoothedWaveCoordinates.length > 1 && mapViewRef.current) {
+    if (mapReady && !mapLoading && smoothedWaveCoordinates.length > 1 && mapViewRef.current) {
       setTimeout(() => {
           mapViewRef.current?.fitToCoordinates(smoothedWaveCoordinates, {
               edgePadding: { top: 15, right: 15, bottom: 15, left: 15 },
               animated: false,
           });
       }, 200);
+    } else if (mapReady && !mapLoading && rawCoordinates.length <= 1) {
     }
-  }, [mapLoading, smoothedWaveCoordinates]);
+  }, [mapReady, mapLoading, smoothedWaveCoordinates, rawCoordinates, session.id]);
 
   return (
     <TouchableOpacity style={styles.cardContainer} onPress={onPress} activeOpacity={0.8}>
@@ -178,9 +179,11 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
       {/* Right Side - Map Preview */}
       <View style={styles.rightSide}>
          <MapView
+            key={session.id}
             ref={mapViewRef}
             style={styles.mapPreview}
             mapType="satellite"
+            onMapReady={() => setMapReady(true)}
             scrollEnabled={false}
             zoomEnabled={false}
             pitchEnabled={false}
@@ -188,7 +191,7 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
             showsUserLocation={false}
             showsMyLocationButton={false}
          >
-            {!mapLoading && smoothedWaveCoordinates.length > 1 && (
+            {mapReady && !mapLoading && smoothedWaveCoordinates.length > 1 && (
                 <Polyline
                     coordinates={smoothedWaveCoordinates}
                     strokeColor={colors.pathAquaRGBA}
@@ -207,11 +210,17 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
             pointerEvents="none"
          />
 
-         {/* Loading indicator for map */}
-         {mapLoading && (
-             <View style={styles.mapLoadingOverlay}>
+         {/* Loading / No Data / Error Indicator */}
+         {mapLoading ? (
+             <View style={styles.mapOverlayContainer}>
                  <ActivityIndicator size="small" color={colors.primaryBlue} />
              </View>
+         ) : (
+            rawCoordinates.length <= 1 && (
+                <View style={styles.mapOverlayContainer}>
+                    <Ionicons name="warning-outline" size={20} color={colors.textSecondary} />
+                </View>
+            )
          )}
       </View>
     </TouchableOpacity>
@@ -282,9 +291,9 @@ const styles = StyleSheet.create({
       ...StyleSheet.absoluteFillObject,
       zIndex: 1,
   },
-  mapLoadingOverlay: {
+  mapOverlayContainer: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(238, 242, 247, 0.6)', // Semi-transparent background
+      backgroundColor: 'rgba(238, 242, 247, 0.6)',
       justifyContent: 'center',
       alignItems: 'center',
       zIndex: 3,
@@ -292,6 +301,11 @@ const styles = StyleSheet.create({
   mapIcon: {
        // Removed as MapView is used now
   },
+  noDataText: {
+      fontSize: 10,
+      color: colors.textSecondary,
+      marginTop: 2,
+  }
 });
 
 export default SessionCard; 
