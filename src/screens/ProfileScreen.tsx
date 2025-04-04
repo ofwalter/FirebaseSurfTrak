@@ -8,9 +8,11 @@ import {
   ScrollView,
   Platform,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
-import { auth } from '../services/firebaseConfig';
+import { auth, db } from '../services/firebaseConfig';
 import { signOut, User } from 'firebase/auth'; // Import User
+import { doc, getDoc, onSnapshot, Timestamp } from 'firebase/firestore'; // Import firestore functions
 import { BlurView } from 'expo-blur';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -32,6 +34,7 @@ const colors = {
   iconBackgroundGreen: '#dcfce7', // Light green
   iconBackgroundOrange: '#fff7ed', // Light orange
   iconBackgroundRed: '#fee2e2', // Light red
+  borderLight: '#dee2e6', // Added missing border color
 };
 
 // --- Reusable Components (Inline for simplicity) ---
@@ -50,17 +53,43 @@ const ProfileHeader = () => (
   </BlurView>
 );
 
-interface ProfileCardProps {
-    user: User | null;
-    sessionsCount: number;
-    totalWavesCount: number;
+// --- Define Interfaces (similar to HomeScreen) ---
+interface RankData {
+    rankLevel: number;
+    name: string;
+    xpThreshold: number;
 }
 
-const ProfileCard = ({ user, sessionsCount, totalWavesCount }: ProfileCardProps) => {
-    // Get today's date
-    const today = new Date();
-    const dateOptions: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
-    const todaysDateFormatted = today.toLocaleDateString('en-US', dateOptions);
+interface UserProfileData { // Define base user profile structure
+    uid: string;
+    name: string;
+    email: string;
+    xp: number;
+    rankLevel: number;
+    activeGoals: { [key: string]: { progress: number; completed: boolean; lastReset?: Timestamp } };
+    // Add optional fields fetched later
+    currentRankName?: string;
+    nextRankThreshold?: number;
+    sessionsCount?: number; // Add placeholder stats fields
+    totalWavesCount?: number;
+}
+
+// Update ProfileCard props and content
+interface ProfileCardProps {
+    userProfile: UserProfileData | null;
+    // Remove explicit stats props, get from userProfile
+}
+
+const ProfileCard = ({ userProfile }: ProfileCardProps) => {
+    if (!userProfile) {
+        return null; // Or a placeholder/loading state
+    }
+
+    const { name, email, xp = 0, currentRankName = "Rookie", nextRankThreshold = 100 } = userProfile;
+
+    // Calculate progress
+    const progress = nextRankThreshold > 0 ? Math.min(xp / nextRankThreshold, 1) : 1;
+    const progressPercent = Math.round(progress * 100);
 
     return (
         <View style={styles.profileCardContainer}>
@@ -68,24 +97,22 @@ const ProfileCard = ({ user, sessionsCount, totalWavesCount }: ProfileCardProps)
                 source={require('../../assets/placeholder-profilephoto.png')}
                 style={styles.profilePicture}
             />
-            <Text style={styles.profileName}>{user?.displayName || user?.email || 'SurfTrak User'}</Text>
-            <Text style={styles.profileEmail}>{user?.email || 'No email provided'}</Text>
+            <Text style={styles.profileName}>{name || email || 'SurfTrak User'}</Text>
+            {/* Display Rank */}
+            <Text style={styles.profileRank}>{currentRankName}</Text>
 
-            {/* Stats Summary - Updated */}
-            <View style={styles.statsSummaryRow}>
-                <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{sessionsCount}</Text>
-                    <Text style={styles.statLabel}>Sessions</Text>
-                </View>
-                <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{todaysDateFormatted}</Text>
-                    <Text style={styles.statLabel}>Today</Text>
-                </View>
-                <View style={styles.statItem}>
-                    <Text style={styles.statValue}>{totalWavesCount}</Text>
-                    <Text style={styles.statLabel}>Total Waves</Text>
-                </View>
-            </View>
+            {/* XP Progress Bar */}
+            <View style={styles.xpBarContainer}>
+                 <LinearGradient
+                     colors={[colors.secondaryBlue, colors.primaryBlue, colors.lightBlue]}
+                     style={[styles.xpBarForeground, { width: `${progressPercent}%` }]}
+                     start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                 />
+             </View>
+            <View style={styles.xpTextContainer}>
+                 <Text style={styles.xpText}>{xp.toLocaleString()} XP</Text>
+                 <Text style={styles.xpNextText}>{nextRankThreshold.toLocaleString()} XP to next rank</Text>
+             </View>
         </View>
     );
 };
@@ -122,14 +149,100 @@ const MenuCard = ({ iconName, iconColor, iconBackgroundColor, text, gradientColo
 
 const ProfileScreen = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
+  const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
+  const [loadingProfile, setLoadingProfile] = useState(true);
 
-   // Update user info if auth state changes (optional but good practice)
+   // Effect 1: Update current user from auth state
    useEffect(() => {
      const unsubscribe = auth.onAuthStateChanged(user => {
-       setCurrentUser(user);
+       if (user !== currentUser) {
+          setCurrentUser(user);
+          if (!user) {
+              // Clear profile if user logs out
+              setUserProfile(null);
+              setLoadingProfile(false); // No profile to load
+          }
+       }
      });
-     return unsubscribe; // Unsubscribe on unmount
-   }, []);
+     return unsubscribe; 
+   }, [currentUser]);
+
+   // Effect 2: Fetch user profile and rank data when currentUser changes
+   useEffect(() => {
+     if (!currentUser) {
+       setLoadingProfile(false);
+       setUserProfile(null); // Clear profile if no user
+       return; // Exit if no user
+     }
+
+     setLoadingProfile(true);
+     const userRef = doc(db, 'users', currentUser.uid);
+
+     const unsubscribeProfile = onSnapshot(userRef, async (userDoc) => {
+       if (userDoc.exists()) {
+         const profileData = userDoc.data() as Partial<UserProfileData>;
+         const currentRankLevel = profileData.rankLevel ?? 1;
+         const currentXp = profileData.xp ?? 0;
+
+         // Fetch current and next rank definitions
+         const currentRankRef = doc(db, 'ranks', String(currentRankLevel));
+         const nextRankRef = doc(db, 'ranks', String(currentRankLevel + 1));
+
+         try {
+             const [currentRankSnap, nextRankSnap] = await Promise.all([
+                 getDoc(currentRankRef),
+                 getDoc(nextRankRef),
+             ]);
+
+             const rankName = currentRankSnap.exists() ? (currentRankSnap.data() as RankData).name : 'Rookie';
+             const nextRankThreshold = nextRankSnap.exists() ? (nextRankSnap.data() as RankData).xpThreshold : currentXp; // Use current XP if no next rank
+
+             // Combine fetched data
+             setUserProfile({
+                 uid: profileData.uid ?? currentUser.uid,
+                 name: profileData.name ?? 'User',
+                 email: profileData.email ?? 'No email',
+                 xp: currentXp,
+                 rankLevel: currentRankLevel,
+                 activeGoals: profileData.activeGoals ?? {},
+                 currentRankName: rankName,
+                 nextRankThreshold: nextRankThreshold,
+                 // NOTE: sessionsCount & totalWavesCount aren't directly in user profile
+                 // These might need separate fetching or come from lifetime stats if available
+                 sessionsCount: 0, // Placeholder - Fetch or calculate elsewhere
+                 totalWavesCount: 0, // Placeholder - Fetch or calculate elsewhere
+             });
+         } catch (error) {
+              console.error("Error fetching rank data: ", error);
+              // Set profile with defaults if rank fetch fails
+              setUserProfile({
+                    uid: profileData.uid ?? currentUser.uid,
+                    name: profileData.name ?? 'User',
+                    email: profileData.email ?? 'No email',
+                    xp: currentXp,
+                    rankLevel: currentRankLevel,
+                    activeGoals: profileData.activeGoals ?? {},
+                    currentRankName: 'Rookie', // Default rank name on error
+                    nextRankThreshold: currentXp,
+                    sessionsCount: 0,
+                    totalWavesCount: 0,
+              });
+         }
+
+       } else {
+         console.log("User profile document does not exist for UID:", currentUser.uid);
+         setUserProfile(null); // Handle case where profile doesn't exist
+       }
+       setLoadingProfile(false); // Profile loading finished
+     }, (error) => {
+       console.error("Error listening to user profile: ", error);
+       setUserProfile(null); // Clear profile on error
+       setLoadingProfile(false);
+     });
+
+     // Cleanup listener on unmount or currentUser change
+     return () => unsubscribeProfile();
+   }, [currentUser]);
 
   const handleLogout = async () => {
     Alert.alert(
@@ -160,17 +273,21 @@ const ProfileScreen = () => {
   const handleDeviceManager = () => Alert.alert("Device Manager", "Device Manager not implemented yet.");
   const handleHelp = () => Alert.alert("Help & Support", "Help & Support not implemented yet.");
 
-  // Placeholder data for stats - Updated
-  const placeholderStats = {
-      sessionsCount: 36,
-      totalWavesCount: 245,
-  };
+  // Render loading indicator while profile is loading
+  if (loadingProfile) {
+     return (
+         <View style={styles.loadingContainer}>
+             <ActivityIndicator size="large" color={colors.primaryBlue} />
+         </View>
+     );
+  }
 
   return (
     <View style={styles.screenContainer}>
       <ProfileHeader />
       <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContentContainer}>
-        <ProfileCard user={currentUser} {...placeholderStats} />
+        {/* Pass fetched userProfile data to ProfileCard */}
+        <ProfileCard userProfile={userProfile} />
 
         {/* Menu Options */}
         <View style={styles.menuGroup}>
@@ -295,37 +412,39 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     marginBottom: 4,
   },
-  profileEmail: {
-    fontSize: 15,
-    color: colors.textSecondary,
-    marginBottom: 20,
+  profileRank: { // Style for the rank name
+      fontSize: 16,
+      fontWeight: '500',
+      color: colors.primaryBlue,
+      marginBottom: 15, // Space below rank
   },
-  statsSummaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    width: '100%',
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb', // Light separator line
-    paddingTop: 15,
+  // XP Bar Styles (similar to RankCard)
+  xpBarContainer: {
+      width: '80%', // Make bar slightly smaller than card width
+      height: 10,
+      backgroundColor: colors.background, // Use screen background color
+      borderRadius: 5,
+      overflow: 'hidden',
+      marginBottom: 8,
   },
-  statItem: {
-    alignItems: 'center',
+  xpBarForeground: {
+      height: '100%',
+      borderRadius: 5,
   },
-  statValue: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: colors.textPrimary,
+  xpTextContainer: {
+     flexDirection: 'row',
+     justifyContent: 'space-between',
+     width: '80%', // Match bar width
+     marginBottom: 20, // Space below XP text
   },
-   statUnit: {
-       fontSize: 14,
-       fontWeight: 'normal',
-       color: colors.textSecondary,
-       marginLeft: 2,
-   },
-  statLabel: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    marginTop: 3,
+  xpText: {
+      fontSize: 13,
+      color: colors.textPrimary,
+      fontWeight: '500',
+  },
+  xpNextText: {
+      fontSize: 13,
+      color: colors.textSecondary,
   },
   // Menu Styles
   menuGroup: {
@@ -362,6 +481,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.textPrimary,
     fontWeight: '500',
+  },
+  loadingContainer: { // Style for loading indicator view
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: colors.background,
   },
 });
 

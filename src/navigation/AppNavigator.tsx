@@ -16,9 +16,10 @@ import SessionsScreen from '../screens/SessionsScreen';
 import ForecastScreen from '../screens/ForecastScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SessionDetailScreen from '../screens/SessionDetailScreen'; // Import the new detail screen
+import GoalsScreen from '../screens/GoalsScreen'; // Import Goals Screen
 
 // Define Stack types
-type AuthStackParamList = {
+export type AuthStackParamList = {
   Login: undefined;
   Signup: undefined;
 };
@@ -35,6 +36,7 @@ type AppTabParamList = {
 export type AppStackParamList = {
   AppTabs: undefined; // Represents the entire Bottom Tab Navigator
   SessionDetail: { sessionId: string; sessionLocation: string }; // Screen for session details
+  Goals: undefined; // Add Goals screen to the stack parameters
   // Add other non-tab screens here (e.g., Settings, Edit Profile)
 };
 
@@ -122,17 +124,24 @@ const AppStackNavigator = () => {
         component={AppTabNavigator} // Use the Tab navigator component
         options={{ headerShown: false }} // Hide the stack header for the tab screen itself
       />
-      {/* The Session Detail screen is a separate screen in the stack */}
+      {/* The Session Detail screen */}
       <AppStack.Screen
         name="SessionDetail"
         component={SessionDetailScreen}
-        // Options can set the header title dynamically based on route params
         options={({ route }) => ({
           title: `${route.params.sessionLocation} Details`,
-          headerBackTitle: "Back", // Set custom back button text
-          // Or use headerBackTitleVisible: false to hide text completely
+          headerBackTitle: "Back",
         })}
       />
+      {/* Add Goals Screen to the stack */}
+       <AppStack.Screen
+         name="Goals"
+         component={GoalsScreen}
+         options={{ 
+             title: "Your Goals", // Set header title
+             headerBackTitle: "Back",
+          }}
+       />
       {/* Add other stack screens here if needed */}
     </AppStack.Navigator>
   );
