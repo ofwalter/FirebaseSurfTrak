@@ -24,10 +24,11 @@ interface Session {
   location: string;
   sessionDate: Timestamp;
   waveCount: number;
-  totalDuration: number; // seconds
-  // Optional: Add startLatitude/Longitude if needed for initial map centering
-  // startLatitude?: number;
-  // startLongitude?: number;
+  duration: number; // Field name updated here too
+  longestWave?: number;
+  maxSpeed?: number;
+  startLatitude: number;
+  startLongitude: number;
 }
 
 // Define colors (could also import from a central constants file)
@@ -46,11 +47,11 @@ const colors = {
   markerAqua: '#00A0A0',
 };
 
-// Helper to format duration (seconds) into Hh Mm
-const formatDuration = (seconds: number): string => {
-  if (!seconds || seconds <= 0) return '0m';
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
+// Helper to format duration (seconds to HH:MM:SS or MM:SS)
+const formatDuration = (totalSeconds: number): string => {
+  if (!totalSeconds || totalSeconds <= 0) return '0m';
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
   let formatted = '';
   if (h > 0) formatted += `${h}h `;
   if (m > 0 || h === 0) formatted += `${m}m`; // Show minutes if hours > 0 or if hours === 0
@@ -101,7 +102,7 @@ interface SessionCardProps {
 
 const SessionCard = ({ session, onPress }: SessionCardProps) => {
   const { date, timeRange } = formatDateAndTime(session.sessionDate);
-  const durationFormatted = formatDuration(session.totalDuration);
+  const durationFormatted = formatDuration(session.duration);
   const mapViewRef = useRef<MapView>(null);
   const [rawCoordinates, setRawCoordinates] = useState<GeoPoint[]>([]);
   const [mapLoading, setMapLoading] = useState(true);

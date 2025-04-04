@@ -39,13 +39,14 @@ interface Wave {
 
 // Define Session interface locally (ensure ID is required)
 interface Session {
-  id: string; // Changed from id? to id
+  id: string; 
   userId: string;
   location: string;
   sessionDate: Timestamp;
   waveCount: number;
-  totalDuration: number;
-  // Add base coordinates for map centering
+  duration: number;
+  longestWave?: number;
+  maxSpeed?: number;
   startLatitude: number;
   startLongitude: number;
 }
@@ -213,15 +214,16 @@ const SessionsScreen = () => {
     try {
         const sessionDate = Timestamp.now();
         const waveCount = Math.floor(Math.random() * 5) + 2;
-        let totalDuration = 0;
+        let calculatedTotalDuration = 0;
+        let calculatedMaxDuration = 0;
+        let calculatedMaxSpeed = 0;
 
-        const newSessionData: Omit<Session, 'id'> = {
+        const newSessionData: Omit<Session, 'id' | 'duration' | 'longestWave' | 'maxSpeed'> = {
             userId: currentUser.uid,
-            location: locationName, // Use selected spot name
+            location: locationName,
             sessionDate: sessionDate,
             waveCount: waveCount,
-            totalDuration: 0,
-            startLatitude: baseLatitude, // Use selected spot coords (with variation)
+            startLatitude: baseLatitude,
             startLongitude: baseLongitude,
         };
         const sessionRef = await addDoc(collection(db, "sessions"), newSessionData);
@@ -230,20 +232,25 @@ const SessionsScreen = () => {
         const wavesSubCollectionRef = collection(db, "sessions", sessionRef.id, "waves");
 
         for (let i = 0; i < waveCount; i++) {
-            const duration = Math.floor(Math.random() * 15) + 5;
+            const waveDuration = Math.floor(Math.random() * 15) + 5;
+            const waveTopSpeed = Math.random() * 20 + 10;
             const startTime = Timestamp.fromMillis(sessionDate.toMillis() + i * 60000 + Math.random() * 5000);
-            const endTime = Timestamp.fromMillis(startTime.toMillis() + duration * 1000);
-            totalDuration += duration;
+            const endTime = Timestamp.fromMillis(startTime.toMillis() + waveDuration * 1000);
+            
+            calculatedTotalDuration += waveDuration;
+            if (waveDuration > calculatedMaxDuration) {
+                calculatedMaxDuration = waveDuration;
+            }
+            if (waveTopSpeed > calculatedMaxSpeed) {
+                calculatedMaxSpeed = waveTopSpeed;
+            }
 
-            // --- Generate Fake Coordinates Relative to Spot ---
             const waveCoordinates: GeoPoint[] = [];
-            const pointsCount = duration * 2;
+            const pointsCount = waveDuration * 2;
             const startLatOffset = (Math.random() - 0.5) * 0.001;
             const startLonOffset = (Math.random() - 0.5) * 0.001;
-            // Start slightly further out from the base spot location
             const waveStartLat = baseLatitude + 0.0015 + startLatOffset;
             const waveStartLon = baseLongitude + startLonOffset;
-            // End closer to the base spot location
             const waveEndLat = baseLatitude - 0.0003 + (Math.random() - 0.5) * 0.0003;
             const waveEndLon = baseLongitude + (Math.random() - 0.5) * 0.0003;
 
@@ -253,20 +260,25 @@ const SessionsScreen = () => {
                 const lon = waveStartLon + (waveEndLon - waveStartLon) * progress + (Math.random() - 0.5) * 0.00005;
                 waveCoordinates.push({ latitude: lat, longitude: lon });
             }
-            // --------------------------------------------------
 
             const newWaveData: Omit<Wave, 'id'> = {
                 startTime: startTime,
                 endTime: endTime,
-                duration: duration,
-                topSpeed: Math.random() * 20 + 10,
+                duration: waveDuration,
+                topSpeed: waveTopSpeed,
                 averageSpeed: Math.random() * 10 + 5,
                 coordinates: waveCoordinates,
             };
             const waveDocRef = doc(wavesSubCollectionRef);
             batch.set(waveDocRef, newWaveData);
         }
-        batch.update(sessionRef, { totalDuration: totalDuration });
+        
+        batch.update(sessionRef, { 
+            duration: calculatedTotalDuration,
+            longestWave: calculatedMaxDuration,
+            maxSpeed: calculatedMaxSpeed
+        });
+        
         await batch.commit();
 
         Alert.alert("Success", `Fake session at ${locationName} added!`);
