@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -108,12 +108,12 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
   const [mapLoading, setMapLoading] = useState(true);
   const [mapReady, setMapReady] = useState(false);
 
-  // Effect to fetch wave coordinates for the map preview
+  // Effect to fetch wave coordinates
   useEffect(() => {
     const fetchCoords = async () => {
       if (!session.id) return;
       setMapLoading(true);
-      setMapReady(false);
+      // Don't reset mapReady here, let onMapReady control it
       try {
         const wavesQuery = collection(db, 'sessions', session.id, 'waves');
         const querySnapshot = await getDocs(wavesQuery);
@@ -126,6 +126,7 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
         });
         setRawCoordinates(allCoords);
       } catch (error) {
+        console.error(`Error fetching coords for session ${session.id}:`, error);
         setRawCoordinates([]);
       } finally {
         setMapLoading(false);
@@ -140,18 +141,21 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
       return smoothPath(rawCoordinates);
   }, [rawCoordinates]);
 
-  // Effect to fit map to coordinates once loaded
-  useEffect(() => {
-    if (mapReady && !mapLoading && smoothedWaveCoordinates.length > 1 && mapViewRef.current) {
+  // Callback for when the map component signals it's ready
+  const handleMapReady = useCallback(() => {
+    setMapReady(true);
+    // Attempt to fit coordinates *only when map is ready AND coordinates are available*
+    if (!mapLoading && smoothedWaveCoordinates.length > 1 && mapViewRef.current) {
+      // Use setTimeout to ensure layout is complete after map ready signal
       setTimeout(() => {
           mapViewRef.current?.fitToCoordinates(smoothedWaveCoordinates, {
               edgePadding: { top: 15, right: 15, bottom: 15, left: 15 },
-              animated: false,
+              animated: false, // No animation needed for card preview
           });
-      }, 200);
-    } else if (mapReady && !mapLoading && rawCoordinates.length <= 1) {
+      }, 100); // Short delay
     }
-  }, [mapReady, mapLoading, smoothedWaveCoordinates, rawCoordinates, session.id]);
+  // Add dependencies: re-run if loading state changes or coords update *after* map is ready
+  }, [mapLoading, smoothedWaveCoordinates]);
 
   return (
     <TouchableOpacity style={styles.cardContainer} onPress={onPress} activeOpacity={0.8}>
@@ -180,18 +184,26 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
       {/* Right Side - Map Preview */}
       <View style={styles.rightSide}>
          <MapView
-            key={session.id}
+            // key prop might not be needed here if we handle updates correctly
             ref={mapViewRef}
             style={styles.mapPreview}
             mapType="satellite"
-            onMapReady={() => setMapReady(true)}
+            onMapReady={handleMapReady} // Use the callback
             scrollEnabled={false}
             zoomEnabled={false}
             pitchEnabled={false}
             rotateEnabled={false}
             showsUserLocation={false}
             showsMyLocationButton={false}
+            // Set initial region to prevent showing the whole world initially
+            initialRegion={{
+                latitude: session.startLatitude ?? 0,
+                longitude: session.startLongitude ?? 0,
+                latitudeDelta: 0.01, // Reasonable initial zoom
+                longitudeDelta: 0.01,
+            }}
          >
+            {/* Render polyline only when map is ready and coords exist */}
             {mapReady && !mapLoading && smoothedWaveCoordinates.length > 1 && (
                 <Polyline
                     coordinates={smoothedWaveCoordinates}
@@ -211,15 +223,17 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
             pointerEvents="none"
          />
 
-         {/* Loading / No Data / Error Indicator */}
+         {/* Loading / No Data Indicator */}
          {mapLoading ? (
              <View style={styles.mapOverlayContainer}>
                  <ActivityIndicator size="small" color={colors.primaryBlue} />
              </View>
          ) : (
-            rawCoordinates.length <= 1 && (
+            // Show indicator if not loading but no coords found
+            mapReady && rawCoordinates.length <= 1 && (
                 <View style={styles.mapOverlayContainer}>
-                    <Ionicons name="warning-outline" size={20} color={colors.textSecondary} />
+                    <Ionicons name="map-outline" size={20} color={colors.textSecondary} />
+                    {/* Optional: Text("No path data") */}
                 </View>
             )
          )}
@@ -233,11 +247,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     borderRadius: 20,
     overflow: 'hidden',
-    backgroundColor: colors.white, // Background for shadow
+    backgroundColor: colors.white,
     marginVertical: 10,
     marginHorizontal: 15,
-    minHeight: 140, // Slightly increased minHeight for more map space
-    // Shadow
+    minHeight: 140,
     elevation: 5,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -245,12 +258,12 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   leftSide: {
-    flex: 2, // Reduced flex
+    flex: 2,
     padding: 15,
     justifyContent: 'space-between',
   },
   rightSide: {
-    flex: 3, 
+    flex: 3,
     backgroundColor: colors.mapBackground,
     position: 'relative',
     overflow: 'hidden',
@@ -294,7 +307,7 @@ const styles = StyleSheet.create({
   },
   mapOverlayContainer: {
       ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(238, 242, 247, 0.6)',
+      backgroundColor: 'rgba(238, 242, 247, 0.7)', // Slightly more opaque overlay
       justifyContent: 'center',
       alignItems: 'center',
       zIndex: 3,

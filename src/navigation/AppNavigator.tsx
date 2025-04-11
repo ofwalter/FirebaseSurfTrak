@@ -99,7 +99,7 @@ const AppTabNavigator = () => {
           else if (route.name === 'Profile') iconName = focused ? 'person-circle' : 'person-circle-outline';
           return <Ionicons name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: 'tomato',
+        tabBarActiveTintColor: '#004080',
         tabBarInactiveTintColor: 'gray',
         // Header should be shown by the parent Stack Navigator now
         headerShown: false, // <- Important: Hide headers within Tabs
