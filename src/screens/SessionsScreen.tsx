@@ -82,22 +82,24 @@ interface SessionsHeaderProps {
 const SessionsHeader = ({ onAddPress, onFilterPress, onRefreshPress, isAdding }: SessionsHeaderProps) => {
     return (
         <View style={styles.headerContainer}> 
-            {/* Left Button (Add) */}
+            {/* Left Button (Add) - Styled like right buttons */} 
             <View style={styles.headerSideContainer}> 
-                 <TouchableOpacity style={styles.addButtonCircle} onPress={onAddPress} disabled={isAdding} activeOpacity={0.7}>
+                 {/* Replace circle button with icon button */} 
+                 <TouchableOpacity style={styles.headerIconButton} onPress={onAddPress} disabled={isAdding} activeOpacity={0.7}>
                     {isAdding 
-                        ? <ActivityIndicator color="#fff"/> 
-                        : <Ionicons name="add" size={30} color="#fff" /> // Use simple add icon
+                        ? <ActivityIndicator size="small" color={colors.primaryBlue}/> 
+                        : <Ionicons name="add-outline" size={28} color={colors.primaryBlue} /> // Adjusted size and color
                     } 
                  </TouchableOpacity>
             </View>
 
-            {/* Centered Title */}
+            {/* Centered Title */} 
             <View style={styles.headerTitleContainer}>
+                {/* Keep title style */}
                 <Text style={styles.headerTitle}>Sessions</Text>
             </View>
 
-            {/* Right Buttons (Refresh, Filter) */}
+            {/* Right Buttons (Refresh, Filter) - Keep structure */} 
              <View style={[styles.headerSideContainer, styles.headerRightButtons]}>
                  <TouchableOpacity style={styles.headerIconButton} onPress={onRefreshPress}> 
                      <Ionicons name="refresh-outline" size={26} color={colors.primaryBlue} />
@@ -376,47 +378,37 @@ const styles = StyleSheet.create({
   },
   headerContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    paddingTop: Platform.OS === 'ios' ? 55 : 30, // Maintain vertical padding
+    paddingBottom: 10,
     paddingHorizontal: 15,
-    paddingTop: Platform.OS === 'ios' ? 50 : 15,
-    paddingBottom: 15,
-    backgroundColor: colors.white,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.borderLight || '#e5e7eb',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.background, // Match screen background
+    borderBottomWidth: 1, // Keep separator
+    borderBottomColor: colors.borderLight, // Use lighter border
+    width: '100%', // Ensure it takes full width
   },
   headerSideContainer: {
-    flex: 1,
+    flex: 1, // Allows title to center correctly
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   headerTitleContainer: {
-    flex: 2,
+    flex: 2, // Give title more space to center
     alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
-    fontSize: 22,
+    fontSize: 20, // Slightly smaller title
     fontWeight: 'bold',
-    color: colors.textPrimary || '#1f2937',
+    color: colors.textPrimary,
   },
   headerRightButtons: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-  },
-  addButtonCircle: {
-    backgroundColor: colors.primaryBlue,
-    borderRadius: 28,
-    width: 56,
-    height: 56,
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    justifyContent: 'flex-end', // Align right buttons to the end
   },
   headerIconButton: {
-    padding: 10,
-    marginLeft: 10,
+    padding: 8, // Consistent padding for all icon buttons
+    marginLeft: 8, // Space between right icons
   },
   loader: {
     flex: 1,

@@ -7,11 +7,11 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Timestamp, collection, getDocs } from 'firebase/firestore';
 import MapView, { Polyline } from 'react-native-maps';
 import { db } from '../services/firebaseConfig';
+import { BlurView } from 'expo-blur';
 
 // Re-use Session interface (Consider moving to a shared types file later)
 interface GeoPoint {
@@ -31,20 +31,20 @@ interface Session {
   startLongitude: number;
 }
 
-// Define colors (could also import from a central constants file)
+// Define colors (adjust as needed)
 const colors = {
   primaryBlue: '#1A73E8',
-  primaryBlueRGBA: 'rgba(26, 115, 232, 0.7)', // Added for polyline
+  primaryBlueRGBA: 'rgba(26, 115, 232, 0.7)',
   secondaryBlue: '#0056B3',
   lightBlue: '#4AB1FF',
-  mapBackground: '#eef2f7', // Slightly lighter map background
-  mapIcon: '#60a5fa', // Slightly darker blue for map icons
   textPrimary: '#1f2937',
   textSecondary: '#6b7280',
   white: '#ffffff',
   pathAqua: '#00C8C8',
-  pathAquaRGBA: 'rgba(0, 200, 200, 0.8)',
-  markerAqua: '#00A0A0',
+  pathAquaRGBA: 'rgba(0, 200, 200, 0.9)',
+  cardBackground: 'rgba(255, 255, 255, 0.7)',
+  textOnDark: '#f0f4f8',
+  textOnDarkSecondary: '#cbd5e1',
 };
 
 // Helper to format duration (seconds to HH:MM:SS or MM:SS)
@@ -149,177 +149,159 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
       // Use setTimeout to ensure layout is complete after map ready signal
       setTimeout(() => {
           mapViewRef.current?.fitToCoordinates(smoothedWaveCoordinates, {
-              edgePadding: { top: 15, right: 15, bottom: 15, left: 15 },
-              animated: false, // No animation needed for card preview
+              edgePadding: { top: 40, right: 40, bottom: 70, left: 40 },
+              animated: false,
           });
-      }, 100); // Short delay
+      }, 150); // Slightly longer delay might help
     }
   // Add dependencies: re-run if loading state changes or coords update *after* map is ready
   }, [mapLoading, smoothedWaveCoordinates]);
 
   return (
-    <TouchableOpacity style={styles.cardContainer} onPress={onPress} activeOpacity={0.8}>
-      {/* Left Side - Gradient */}
-      <LinearGradient
-        colors={[colors.primaryBlue, colors.secondaryBlue]}
-        style={styles.leftSide}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+    <TouchableOpacity style={styles.cardContainer} onPress={onPress} activeOpacity={0.85}>
+      {/* Background Map */}
+      <MapView
+         ref={mapViewRef}
+         style={styles.mapBackground}
+         mapType="satellite"
+         onMapReady={handleMapReady}
+         scrollEnabled={false}
+         zoomEnabled={false}
+         pitchEnabled={false}
+         rotateEnabled={false}
+         showsPointsOfInterest={false}
+         initialRegion={{
+             latitude: session.startLatitude ?? 0,
+             longitude: session.startLongitude ?? 0,
+             latitudeDelta: 0.015, // Default zoom
+             longitudeDelta: 0.015,
+         }}
+         customMapStyle={[{ "featureType": "all", "stylers": [{ "saturation": -50 }, { "lightness": -10 }] }]}
       >
-        <Text style={styles.locationText}>{session.location || 'Unknown Location'}</Text>
-        <Text style={styles.dateTimeText}>{date}</Text>
-        <Text style={styles.dateTimeText}>{timeRange}</Text>
-        <View style={styles.statsRow}>
-          <View style={styles.statItem}>
-            <Text style={styles.statLabel}>Waves</Text>
-            <Text style={styles.statValue}>{session.waveCount || 0}</Text>
-          </View>
-          <View style={styles.statItem}>
-            <Text style={styles.statLabel}>Duration</Text>
-            <Text style={styles.statValue}>{durationFormatted}</Text>
-          </View>
-        </View>
-      </LinearGradient>
-
-      {/* Right Side - Map Preview */}
-      <View style={styles.rightSide}>
-         <MapView
-            // key prop might not be needed here if we handle updates correctly
-            ref={mapViewRef}
-            style={styles.mapPreview}
-            mapType="satellite"
-            onMapReady={handleMapReady} // Use the callback
-            scrollEnabled={false}
-            zoomEnabled={false}
-            pitchEnabled={false}
-            rotateEnabled={false}
-            showsUserLocation={false}
-            showsMyLocationButton={false}
-            // Set initial region to prevent showing the whole world initially
-            initialRegion={{
-                latitude: session.startLatitude ?? 0,
-                longitude: session.startLongitude ?? 0,
-                latitudeDelta: 0.01, // Reasonable initial zoom
-                longitudeDelta: 0.01,
-            }}
-         >
-            {/* Render polyline only when map is ready and coords exist */}
-            {mapReady && !mapLoading && smoothedWaveCoordinates.length > 1 && (
-                <Polyline
-                    coordinates={smoothedWaveCoordinates}
-                    strokeColor={colors.pathAquaRGBA}
-                    strokeWidth={2}
-                    zIndex={2}
-                />
-            )}
-         </MapView>
-
-         {/* Blending Gradient Overlay */}
-         <LinearGradient
-            colors={['rgba(26, 115, 232, 0.3)', 'transparent']}
-            style={styles.blendingGradient}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 0.8, y: 0.5 }}
-            pointerEvents="none"
-         />
-
-         {/* Loading / No Data Indicator */}
-         {mapLoading ? (
-             <View style={styles.mapOverlayContainer}>
-                 <ActivityIndicator size="small" color={colors.primaryBlue} />
-             </View>
-         ) : (
-            // Show indicator if not loading but no coords found
-            mapReady && rawCoordinates.length <= 1 && (
-                <View style={styles.mapOverlayContainer}>
-                    <Ionicons name="map-outline" size={20} color={colors.textSecondary} />
-                    {/* Optional: Text("No path data") */}
-                </View>
-            )
+         {mapReady && !mapLoading && smoothedWaveCoordinates.length > 1 && (
+             <Polyline
+                 coordinates={smoothedWaveCoordinates}
+                 strokeColor={colors.pathAquaRGBA}
+                 strokeWidth={3}
+                 zIndex={1}
+             />
          )}
-      </View>
+      </MapView>
+
+      {/* Map Loading Indicator */}
+      {mapLoading && (
+          <View style={styles.mapLoadingOverlay}>
+              <ActivityIndicator size="small" color={colors.white} />
+          </View>
+      )}
+
+      {/* Content Overlay with Blur */}
+      <BlurView intensity={70} tint="dark" style={styles.contentOverlay}>
+          <View style={styles.textContainer}>
+             <Text style={styles.locationText} numberOfLines={1}>{session.location || 'Unknown Location'}</Text>
+             <Text style={styles.dateTimeText}>{date} • {timeRange}</Text>
+          </View>
+          <View style={styles.statsContainer}>
+              <View style={styles.statItem}>
+                  <Ionicons name="water-outline" size={16} color={colors.textOnDarkSecondary} />
+                  <Text style={styles.statValue}>{session.waveCount || 0}</Text>
+                  <Text style={styles.statLabel}>Waves</Text>
+              </View>
+              <View style={styles.statSeparator} />
+              <View style={styles.statItem}>
+                   <Ionicons name="stopwatch-outline" size={16} color={colors.textOnDarkSecondary} />
+                   <Text style={styles.statValue}>{durationFormatted}</Text>
+                   <Text style={styles.statLabel}>Time</Text>
+              </View>
+              {session.maxSpeed !== undefined && (
+                 <>
+                     <View style={styles.statSeparator} />
+                     <View style={styles.statItem}>
+                         <Ionicons name="flash-outline" size={16} color={colors.textOnDarkSecondary} />
+                         <Text style={styles.statValue}>{session.maxSpeed.toFixed(0)}</Text>
+                         <Text style={styles.statLabel}>mph</Text>
+                     </View>
+                 </>
+              )}
+          </View>
+      </BlurView>
     </TouchableOpacity>
   );
 };
 
 const styles = StyleSheet.create({
   cardContainer: {
-    flexDirection: 'row',
+    height: 200,
     borderRadius: 20,
     overflow: 'hidden',
-    backgroundColor: colors.white,
-    marginVertical: 10,
+    marginBottom: 15,
     marginHorizontal: 15,
-    minHeight: 140,
+    backgroundColor: colors.secondaryBlue,
     elevation: 5,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
+    shadowOffset: { width: 0, height: 3 },
     shadowOpacity: 0.2,
-    shadowRadius: 4,
+    shadowRadius: 5,
   },
-  leftSide: {
-    flex: 2,
-    padding: 15,
-    justifyContent: 'space-between',
+  mapBackground: {
+      ...StyleSheet.absoluteFillObject,
   },
-  rightSide: {
-    flex: 3,
-    backgroundColor: colors.mapBackground,
-    position: 'relative',
-    overflow: 'hidden',
+  mapLoadingOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(0,0,0,0.4)',
+      justifyContent: 'center',
+      alignItems: 'center',
+      zIndex: 2,
+  },
+  contentOverlay: {
+      position: 'absolute',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      paddingTop: 15,
+      paddingBottom: Platform.OS === 'ios' ? 15 : 12,
+      paddingHorizontal: 15,
+      zIndex: 3,
+  },
+  textContainer: {
+      marginBottom: 10,
   },
   locationText: {
     fontSize: 18,
     fontWeight: 'bold',
     color: colors.white,
-    marginBottom: 5,
+    marginBottom: 3,
   },
   dateTimeText: {
     fontSize: 13,
-    color: colors.white,
-    opacity: 0.9,
-    marginBottom: 2,
+    color: colors.textOnDarkSecondary,
   },
-  statsRow: {
+  statsContainer: {
     flexDirection: 'row',
-    marginTop: 10,
+    alignItems: 'center',
   },
   statItem: {
-    marginRight: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingRight: 15,
   },
-  statLabel: {
-    fontSize: 12,
-    color: colors.white,
-    opacity: 0.8,
-    marginBottom: 2,
+  statSeparator: {
+      height: '60%',
+      width: 1,
+      backgroundColor: 'rgba(255, 255, 255, 0.2)',
+      marginRight: 15,
   },
   statValue: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
     color: colors.white,
+    marginLeft: 5,
   },
-  mapPreview: {
-      ...StyleSheet.absoluteFillObject,
+  statLabel: {
+    fontSize: 13,
+    color: colors.textOnDarkSecondary,
+    marginLeft: 4,
   },
-  blendingGradient: {
-      ...StyleSheet.absoluteFillObject,
-      zIndex: 1,
-  },
-  mapOverlayContainer: {
-      ...StyleSheet.absoluteFillObject,
-      backgroundColor: 'rgba(238, 242, 247, 0.7)', // Slightly more opaque overlay
-      justifyContent: 'center',
-      alignItems: 'center',
-      zIndex: 3,
-  },
-  mapIcon: {
-       // Removed as MapView is used now
-  },
-  noDataText: {
-      fontSize: 10,
-      color: colors.textSecondary,
-      marginTop: 2,
-  }
 });
 
 export default SessionCard; 

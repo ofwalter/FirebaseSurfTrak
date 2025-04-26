@@ -8,17 +8,15 @@ import {
   Dimensions,
   Platform,
   ScrollView,
-  Animated,
-  PanResponder,
   TouchableOpacity,
 } from 'react-native';
 import { RouteProp, useRoute } from '@react-navigation/native';
 import { collection, getDocs, Timestamp, doc, getDoc } from 'firebase/firestore';
 import { db } from '../services/firebaseConfig';
 import MapView, { Polyline, Marker } from 'react-native-maps';
-import Slider from '@react-native-community/slider';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { LinearGradient } from 'expo-linear-gradient'; // For stat cards
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Modalize } from 'react-native-modalize';
 
 // Interfaces & Types
 interface GeoPoint {
@@ -75,9 +73,19 @@ const colors = {
 
 const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
 const MAP_HEIGHT = screenHeight * 0.57;
-const PANEL_DOWN_POSITION = MAP_HEIGHT - 30;
-const PANEL_UP_POSITION = screenHeight * 0.15;
-const DRAG_THRESHOLD = 70;
+
+// --- Constants ---
+// Define default region outside
+const defaultInitialRegion = {
+    latitude: 34.0100, // Santa Monica default
+    longitude: -118.4960,
+    latitudeDelta: 0.02,
+    longitudeDelta: 0.02,
+};
+
+const WAVE_SELECTOR_HEIGHT = 60; // Example height
+const PRIMARY_METRICS_HEIGHT = 80; // Example height
+const BOTTOM_SHEET_PEEK_HEIGHT = 80; // How much space Modalize might take when closed
 
 // --- Helper Functions ---
 
@@ -118,31 +126,6 @@ function calculatePathDistance(coordinates: GeoPoint[] | undefined): number {
     return totalDistanceKm * 1000; // Return distance in meters
 }
 
-// --- Reusable Wave Stat Card Component ---
-interface WaveStatCardProps {
-  iconName: string;
-  label: string;
-  value: string;
-  unit?: string;
-  gradientColors: readonly [string, string, ...string[]];
-}
-
-const WaveStatCard = ({ iconName, label, value, unit, gradientColors }: WaveStatCardProps) => (
-  <LinearGradient
-    colors={gradientColors}
-    style={styles.waveStatCard}
-    start={{ x: 0, y: 0 }}
-    end={{ x: 1, y: 1 }}
-  >
-    <Ionicons name={iconName} size={20} color={colors.white} style={styles.statIcon} />
-    <Text style={styles.statLabel}>{label}</Text>
-    <View style={styles.statValueContainer}>
-        <Text style={styles.statValueText}>{value}</Text>
-        {unit && <Text style={styles.statUnitText}>{unit}</Text>}
-    </View>
-  </LinearGradient>
-);
-
 // Simple Path Smoothing Function
 const smoothPath = (path: GeoPoint[], windowSize: number = 3): GeoPoint[] => {
   if (!path || path.length < windowSize) return path;
@@ -161,88 +144,52 @@ const smoothPath = (path: GeoPoint[], windowSize: number = 3): GeoPoint[] => {
   return smoothed;
 };
 
+// Helper component for displaying a single stat row
+interface StatRowProps {
+    icon: string;
+    label: string;
+    value: string;
+    unit?: string;
+}
+const StatRow: React.FC<StatRowProps> = ({ icon, label, value, unit }) => (
+    <View style={styles.statRow}>
+        <Ionicons name={icon} size={20} color={colors.primaryBlue} style={styles.statRowIcon} />
+        <Text style={styles.statRowLabel}>{label}</Text>
+        <Text style={styles.statRowValue}>{value}{unit && <Text style={styles.statRowUnit}> {unit}</Text>}</Text>
+    </View>
+);
+
+// Helper component for primary metric display
+interface PrimaryStatProps {
+    icon: string;
+    label: string;
+    value: string;
+    unit?: string;
+}
+const PrimaryStat: React.FC<PrimaryStatProps> = ({ icon, label, value, unit }) => (
+    <View style={styles.primaryStatItem}>
+        <Ionicons name={icon} size={18} color={colors.textSecondary} style={styles.primaryStatIcon} />
+        <View>
+            <Text style={styles.primaryStatValue}>{value}{unit && <Text style={styles.primaryStatUnit}> {unit}</Text>}</Text>
+            <Text style={styles.primaryStatLabel}>{label}</Text>
+        </View>
+    </View>
+);
+
 // --- SessionDetailScreen Implementation ---
 
 const SessionDetailScreen = () => {
   const route = useRoute<SessionDetailScreenRouteProp>();
   const { sessionId } = route.params;
   const mapRef = useRef<MapView>(null);
+  const modalizeRef = useRef<Modalize>(null);
 
   const [sessionData, setSessionData] = useState<Session | null>(null);
   const [waves, setWaves] = useState<Wave[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedWaveIndex, setSelectedWaveIndex] = useState(-1);
-  const [sliderDisplayIndex, setSliderDisplayIndex] = useState(-1);
   const [mapDetailReady, setMapDetailReady] = useState(false);
-
-  // Animated value for panel position
-  const panelY = useRef(new Animated.Value(PANEL_DOWN_POSITION)).current;
-  // Store the last stable position before dragging starts
-  const lastPanelY = useRef(PANEL_DOWN_POSITION);
-
-  // --- PanResponder Setup ---
-  const panResponder = useRef(
-    PanResponder.create({
-      onMoveShouldSetPanResponder: (_, gestureState) => {
-        return Math.abs(gestureState.dy) > 5;
-      },
-      onPanResponderGrant: () => {
-        // Set the offset to the *last known stable position*
-        panelY.setOffset(lastPanelY.current);
-        // Reset the base value to 0 as we are now working with offset + delta
-        panelY.setValue(0);
-      },
-      onPanResponderMove: (_, gestureState) => {
-        // Move relative to the offset
-        let newRelativeY = gestureState.dy;
-        // Calculate potential absolute position (for clamping)
-        let absoluteY = lastPanelY.current + newRelativeY;
-
-        // Clamp the absolute position
-        if (absoluteY < PANEL_UP_POSITION) {
-          newRelativeY = PANEL_UP_POSITION - lastPanelY.current;
-        } else if (absoluteY > PANEL_DOWN_POSITION) {
-          newRelativeY = PANEL_DOWN_POSITION - lastPanelY.current;
-        }
-        panelY.setValue(newRelativeY);
-      },
-      onPanResponderRelease: (_, gestureState) => {
-        // Combine offset and final value *before* flattening
-        const finalY = lastPanelY.current + gestureState.dy;
-        // Flatten offset now, making the panelY value absolute again
-        panelY.flattenOffset();
-        // Update the last stable position reference
-        lastPanelY.current = finalY < PANEL_UP_POSITION ? PANEL_UP_POSITION : (finalY > PANEL_DOWN_POSITION ? PANEL_DOWN_POSITION : finalY);
-        // Set the Animated value to the potentially clamped final position
-        panelY.setValue(lastPanelY.current);
-
-        // Determine target position based on release velocity and final clamped position
-        let targetPosition = PANEL_DOWN_POSITION;
-        if (gestureState.vy < -0.5 || (gestureState.dy < 0 && lastPanelY.current < PANEL_DOWN_POSITION - DRAG_THRESHOLD)) {
-            targetPosition = PANEL_UP_POSITION;
-        } else if (gestureState.vy > 0.5 || (gestureState.dy > 0 && lastPanelY.current > PANEL_UP_POSITION + DRAG_THRESHOLD)) {
-            targetPosition = PANEL_DOWN_POSITION;
-        } else {
-             targetPosition = (lastPanelY.current - PANEL_UP_POSITION < PANEL_DOWN_POSITION - lastPanelY.current) ? PANEL_UP_POSITION : PANEL_DOWN_POSITION;
-        }
-
-        // Animate to target position
-        Animated.spring(panelY, {
-          toValue: targetPosition,
-          tension: 60,
-          friction: 10,
-          useNativeDriver: true,
-        }).start(({ finished }) => {
-            // After animation finishes, update lastPanelY to the final target
-            if (finished) {
-                lastPanelY.current = targetPosition;
-            }
-        });
-      },
-    })
-  ).current;
-  // --- End PanResponder Setup ---
 
   // Fetch Session and Waves Effect
   useEffect(() => {
@@ -274,7 +221,6 @@ const SessionDetailScreen = () => {
 
         // Reset index to summary when new data loads
         setSelectedWaveIndex(-1);
-        setSliderDisplayIndex(-1);
 
       } catch (err: any) {
         console.error("Error fetching session/wave data: ", err);
@@ -287,480 +233,571 @@ const SessionDetailScreen = () => {
     fetchSessionAndWaves();
   }, [sessionId]);
 
-  // Memoize selected wave data
-  const selectedWaveRaw = useMemo(() => {
-    return selectedWaveIndex >= 0 && waves.length > selectedWaveIndex
+  // Map Initialization Effect
+  useEffect(() => {
+    if (sessionData && waves.length > 0 && mapRef.current) {
+      mapRef.current.fitToCoordinates(waves.flatMap(wave => wave.coordinates || []), {
+        edgePadding: { top: 80, right: 60, bottom: 80, left: 60 },
+        animated: true,
+      });
+      setMapDetailReady(true);
+    }
+  }, [sessionData, waves, mapRef]);
+
+  // Memoized Values for Map
+  const { selectedWave, allWaveCoordinates, sessionRegion } = useMemo(() => {
+    if (!sessionData) { // Base check on sessionData only for region
+        return {
+            selectedWave: undefined,
+            allWaveCoordinates: [],
+            sessionRegion: defaultInitialRegion
+        };
+    }
+    // Calculate actual region based on sessionData
+    const actualSessionRegion = {
+      latitude: sessionData.startLatitude,
+      longitude: sessionData.startLongitude,
+      latitudeDelta: 0.02,
+      longitudeDelta: 0.02,
+    };
+
+    // Determine selected wave
+    const selectedWave = selectedWaveIndex >= 0 && waves.length > selectedWaveIndex
         ? waves[selectedWaveIndex]
         : null;
-  }, [waves, selectedWaveIndex]);
 
-  // Memoize smoothed coordinates for the selected wave
-  const selectedWaveSmoothedCoords = useMemo(() => {
-      return selectedWaveRaw?.coordinates ? smoothPath(selectedWaveRaw.coordinates) : [];
-  }, [selectedWaveRaw]);
+    // Get coordinates for *all* waves for background display
+    const allCoords = waves
+        .map(w => w.coordinates)
+        .filter((coords): coords is GeoPoint[] => !!coords && coords.length > 1); // Filter out waves with insufficient coords
 
-  // Memoize smoothed coordinates for ALL waves (for summary view)
-  const allSmoothedCoordinates = useMemo(() => {
-      // Smooth each wave path individually, then combine
-      return waves.flatMap(wave => wave.coordinates ? smoothPath(wave.coordinates) : []);
-      // Alternative: Smooth the combined raw coordinates (might connect unrelated paths)
-      // return smoothPath(waves.flatMap(wave => wave.coordinates || []));
-  }, [waves]);
-
-  // Use raw coordinates for map fitting (more accurate bounds)
-  const allRawCoordinates = useMemo(() => {
-      return waves.flatMap(wave => wave.coordinates || []);
-  }, [waves]);
-
-  // Memoize map region based on session data (used for initialRegion)
-  const initialMapRegion = useMemo(() => ({
-    latitude: sessionData?.startLatitude ?? 34.0100, // Default if no session data yet
-    longitude: sessionData?.startLongitude ?? -118.4960,
-    latitudeDelta: 0.02,
-    longitudeDelta: 0.02,
-  }), [sessionData]);
-
-  // Calculate Summary Statistics
-  const summaryStats = useMemo(() => {
-    if (!waves || waves.length === 0) {
-      return { count: 0, avgDuration: 0, avgAvgSpeed: 0, avgTopSpeed: 0 };
-    }
-    const totalDuration = waves.reduce((sum, wave) => sum + (wave.duration || 0), 0);
-    const totalAvgSpeed = waves.reduce((sum, wave) => sum + (wave.averageSpeed || 0), 0);
-    const totalTopSpeed = waves.reduce((sum, wave) => sum + (wave.topSpeed || 0), 0);
-    const count = waves.length;
-    return {
-      count: count,
-      avgDuration: count > 0 ? totalDuration / count : 0,
-      avgAvgSpeed: count > 0 ? totalAvgSpeed / count : 0,
-      avgTopSpeed: count > 0 ? totalTopSpeed / count : 0,
+    return { 
+        selectedWave, 
+        allWaveCoordinates: allCoords, // Return coords for ALL waves
+        sessionRegion: actualSessionRegion 
     };
-  }, [waves]);
+  }, [sessionData, waves, selectedWaveIndex]);
 
-  // --- Map Animation Effect (Depends on selectedWaveIndex) ---
-  useEffect(() => {
-    // Only run if map is ready and we are not loading session/wave data
-    if (!mapDetailReady || !mapRef.current || loading) return;
+  // Filter displayable waves (needed for summary stats)
+  // Moved filtering before summaryStats calculation
+  const displayableWaves = useMemo(() => 
+      waves.filter(w => w.coordinates && w.coordinates.length > 0), 
+      [waves]
+  );
 
-    const isSummaryActive = selectedWaveIndex === -1;
-    const coordinatesToFit = isSummaryActive
-      ? allRawCoordinates // Use raw for bounds fitting
-      : (selectedWaveRaw?.coordinates && selectedWaveRaw.coordinates.length > 0 ? selectedWaveRaw.coordinates : null);
+  // Calculate Summary Stats (Moved BEFORE early returns)
+  const summaryStats = useMemo(() => {
+    const count = displayableWaves.length;
+    if (count === 0) return null;
 
-    if (coordinatesToFit && coordinatesToFit.length > 0) {
-        // Use a slight delay to allow rendering updates to settle after state change
-        setTimeout(() => {
-             mapRef.current?.fitToCoordinates(coordinatesToFit, {
-                // Adjust padding: Less bottom padding needed now panel doesn't overlap map state directly?
-                // Give more padding at the top to account for potential status bar/notch
-                // Let panel handle its own space.
-                edgePadding: { top: 80, right: 60, bottom: 80, left: 60 },
-                animated: true,
-            });
-        }, 250); // Keep a small delay
-    } else if (sessionData) {
-        // Fallback: If no coords to fit, gently animate to initial session region
-        mapRef.current.animateToRegion(initialMapRegion, 1000);
+    const totalDuration = displayableWaves.reduce((sum, w) => sum + w.duration, 0);
+    const totalDistance = displayableWaves.reduce((sum, w) => sum + calculatePathDistance(w.coordinates), 0);
+    const avgDuration = totalDuration / count;
+    const avgMaxSpeed = displayableWaves.reduce((sum, w) => sum + w.topSpeed, 0) / count;
+    const bestMaxSpeed = Math.max(...displayableWaves.map(w => w.topSpeed));
+    const firstWaveStart = displayableWaves[0].startTime?.toDate().getTime();
+    const lastWaveEnd = displayableWaves[count - 1].endTime?.toDate().getTime();
+    const sessionLengthSeconds = (firstWaveStart && lastWaveEnd) ? (lastWaveEnd - firstWaveStart) / 1000 : 0;
+
+    return {
+        count,
+        totalDuration,
+        sessionLengthSeconds,
+        avgDuration,
+        avgMaxSpeed,
+        bestMaxSpeed,
+        totalDistance,
+    };
+  }, [displayableWaves]); // Depend on displayableWaves
+
+  // --- Formatters (Defined before potential early returns) ---
+  const formatTimestamp = (timestamp: Timestamp | undefined): string => {
+    if (!timestamp) return '-';
+    const date = timestamp.toDate();
+    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+  const formatDuration = (seconds: number | undefined): string => {
+    if (seconds === undefined) return '0 sec';
+    return `${Math.round(seconds)} sec`;
+  };
+
+  // --- Handlers (Defined before potential early returns) ---
+  const handleSelectSummary = () => {
+    if (selectedWaveIndex !== -1) {
+        handleWaveSelect(-1);
     }
-  // Update dependencies: Run when index changes, map is ready, or coords data updates
-  }, [mapDetailReady, selectedWaveIndex, selectedWaveRaw, allRawCoordinates, sessionData, initialMapRegion, loading]);
-
-  // Handler for slider value change *during* the slide (updates label)
-  const handleSliderValueUpdate = (value: number) => {
-    const newIndex = Math.round(value);
-    setSliderDisplayIndex(newIndex); // Update temporary display index for label
   };
 
-  // Handler for when the user *finishes* sliding
-  const handleSlidingComplete = (value: number) => {
-    const finalIndex = Math.round(value);
-    setSelectedWaveIndex(finalIndex); // Set the actual state that triggers effects
-    setSliderDisplayIndex(finalIndex); // Sync display index
-    // No map remount needed here
-    // The useEffect hook depending on selectedWaveIndex will handle map fitting
+  const handleSelectPrevious = () => {
+    const newIndex = selectedWaveIndex === -1 
+        ? displayableWaves.length - 1 // Wrap from summary to last wave
+        : Math.max(-1, selectedWaveIndex - 1); // Go to previous or summary (-1)
+    handleWaveSelect(newIndex);
   };
 
-  // Return loading indicator first
+  const handleSelectNext = () => {
+     const newIndex = selectedWaveIndex === displayableWaves.length - 1
+         ? -1 // Wrap from last wave to summary
+         : Math.min(displayableWaves.length - 1, selectedWaveIndex + 1); // Go to next or last wave
+     handleWaveSelect(newIndex);
+  };
+
+  // Update handleWaveSelect to mostly handle state update and map animation
+  const handleWaveSelect = (index: number) => {
+    if (index === selectedWaveIndex) return; // Avoid re-selecting the same
+
+    setSelectedWaveIndex(index);
+
+    // Map animation logic (keep existing)
+    if (index === -1) {
+        // Fit map to all waves when 'All' is selected
+        const allCoordsFlat = waves.flatMap(w => w.coordinates || []);
+        if (allCoordsFlat.length > 1 && mapRef.current) {
+            const region = calculateRegion(allCoordsFlat);
+            if (region) {
+                 mapRef.current.animateToRegion(region, 500);
+            } else {
+                 mapRef.current.animateToRegion(sessionRegion, 500);
+            }
+        } else if (mapRef.current) {
+            mapRef.current.animateToRegion(sessionRegion, 500);
+        }
+    } else if (index >= 0 && waves[index]?.coordinates) {
+        // Focus on specific wave
+        const coords = waves[index].coordinates!;
+        if (coords.length > 1) {
+             const region = calculateRegion(coords);
+             if (region && mapRef.current) { 
+                 mapRef.current.animateToRegion(region, 500);
+             }
+        }
+    }
+    // Open/Update Modal - Let Modalize handle its own content update based on selectedWaveIndex state
+    // modalizeRef.current?.open(); // Consider opening only on specific interaction? Or keep it open?
+  };
+
+  // --- Region Calculation Helper (Defined before potential early returns) ---
+  const calculateRegion = (coords: GeoPoint[], padding = 0.01) => {
+    if (!coords || coords.length < 2) return undefined;
+
+    let minLat = coords[0].latitude, maxLat = coords[0].latitude;
+    let minLon = coords[0].longitude, maxLon = coords[0].longitude;
+
+    coords.forEach(point => {
+      if (point.latitude < minLat) minLat = point.latitude;
+      if (point.latitude > maxLat) maxLat = point.latitude;
+      if (point.longitude < minLon) minLon = point.longitude;
+      if (point.longitude > maxLon) maxLon = point.longitude;
+    });
+
+    const deltaLat = (maxLat - minLat) * padding;
+    const deltaLon = (maxLon - minLon) * padding;
+
+    return {
+      latitude: (minLat + maxLat) / 2,
+      longitude: (minLon + maxLon) / 2,
+      latitudeDelta: deltaLat,
+      longitudeDelta: deltaLon,
+    };
+  };
+
+  // --- Render Logic ---
+  // Early returns are now AFTER all hooks
   if (loading) {
-    return <ActivityIndicator size="large" style={styles.fullScreenLoader} />;
+    return <ActivityIndicator size="large" style={styles.loadingContainer} />;
+  }
+  if (error) {
+    return <Text style={styles.errorContainer}>{error}</Text>;
+  }
+  if (!sessionData) {
+    return <Text style={styles.errorContainer}>Session data could not be loaded.</Text>;
   }
 
-  // Check for sessionData AFTER loading is false
-  if (!sessionData || error) {
-    return <Text style={styles.errorText}>{error || "Session data could not be loaded."}</Text>;
-  }
-
-  const isSummaryActive = selectedWaveIndex === -1;
-  // Use sliderDisplayIndex for the label text so it updates live
-  const isDisplaySummary = sliderDisplayIndex === -1;
-
+  // --- Main Return --- (summaryStats is already calculated)
   return (
-    <View style={styles.screenContainer}>
+    <GestureHandlerRootView style={{ flex: 1 }}> 
+        {/* Container for Map and Overlays */} 
+        <View style={styles.container}>
+            {/* Map View - Now satellite */}
       <MapView
         ref={mapRef}
-        style={styles.mapView}
-        initialRegion={initialMapRegion}
-        mapType="satellite"
+                style={styles.map} // Make map cover background
+                mapType="satellite" // Set map type to satellite
+                initialRegion={sessionRegion} 
         onMapReady={() => setMapDetailReady(true)}
-      >
-        {/* ---- Start: Render Polylines ---- */}
-
-        {/* 1. Summary Polylines (Render all waves, dim if one is selected) */}
-        {mapDetailReady && waves.map((wave, index) => {
-            const smoothedCoords = wave.coordinates ? smoothPath(wave.coordinates) : [];
-            // Determine opacity based on whether summary is active OR this specific wave is selected
-            const isActive = isSummaryActive || index === selectedWaveIndex;
-            // Use a more distinct color/opacity difference
-            const strokeColor = isActive ? colors.pathAquaRGBA : 'rgba(0, 200, 200, 0.2)'; // Dimmer if inactive
-            const strokeWidth = isActive ? 3 : 2; // Thicker if active
-            const zIndex = isActive ? 1 : 0; // Ensure active line is above others
-
-            return smoothedCoords.length > 1 && (
+                showsUserLocation={false}
+                showsPointsOfInterest={false}
+                // Disable map interactions while modal is potentially open?
+                // scrollEnabled={false} 
+                // zoomEnabled={false}
+            >
+                {/* Render ALL wave paths (dimly) */}
+                {allWaveCoordinates.map((waveCoords, waveIdx) => (
+                    // Only render if coordinates exist
+                    // Apply dim style if a specific wave is selected AND it's not this one
+                    <Polyline
+                        key={`wave-path-${waveIdx}`}
+                        coordinates={waveCoords}
+                        strokeColor={
+                            selectedWaveIndex !== -1 && selectedWaveIndex !== waveIdx 
+                                ? colors.primaryBlueRGBA // Dim if another wave selected
+                                : colors.primaryBlue // Normal color if 'All' is selected (overridden below if needed)
+                        }
+                        strokeWidth={
+                            selectedWaveIndex !== -1 && selectedWaveIndex !== waveIdx 
+                                ? 3 // Thinner if another wave selected
+                                : 4 // Slightly thicker for 'All' view (overridden below if needed)
+                        }
+                    />
+                ))}
+    
+                {/* Render selected wave path (prominently on top) */}
+                {selectedWave?.coordinates && selectedWave.coordinates.length > 1 && (
                 <Polyline
-                    key={`wave-poly-${wave.id || index}`} // Unique key needed
-                    coordinates={smoothedCoords}
-                    strokeColor={strokeColor}
-                    strokeWidth={strokeWidth}
-                    lineCap="round"
-                    zIndex={zIndex}
-               />
-            );
-        })}
-
-        {/* Polyline for selected wave is handled by the loop above now */}
-
-        {/* ---- End: Render Polylines ---- */}
-
-        {/* ---- Start: Render Markers (Only for selected wave) ---- */}
-         {mapDetailReady && !isSummaryActive && selectedWaveRaw?.coordinates && selectedWaveRaw.coordinates.length > 0 && (
+                        key={`selected-wave-path-${selectedWaveIndex}`}
+                        coordinates={selectedWave.coordinates}
+                        strokeColor={colors.pathAqua} // Bright highlight color
+                        strokeWidth={5} // Thickest line
+                        zIndex={1} // Ensure it's on top
+                    />
+                )}
+                {/* Markers for start/end of selected wave */}
+                {selectedWave?.coordinates && selectedWave.coordinates.length > 0 && (
              <>
-                 <Marker coordinate={selectedWaveRaw.coordinates[0]} anchor={{ x: 0.5, y: 0.5 }} zIndex={3}>
-                    <View style={[styles.customMarker, { backgroundColor: colors.markerAqua }]} />
-                 </Marker>
-                 <Marker coordinate={selectedWaveRaw.coordinates[selectedWaveRaw.coordinates.length - 1]} anchor={{ x: 0.5, y: 0.5 }} zIndex={3}>
-                    <View style={[styles.customMarker, { backgroundColor: colors.markerAqua }]} />
-                 </Marker>
+                          <Marker
+                              coordinate={selectedWave.coordinates[0]}
+                              title={`Wave ${selectedWaveIndex + 1} Start`}
+                              pinColor={colors.markerAqua} 
+                          />
+                          <Marker
+                              coordinate={selectedWave.coordinates[selectedWave.coordinates.length - 1]}
+                              title={`Wave ${selectedWaveIndex + 1} End`}
+                              pinColor={colors.red}
+                          />
              </>
          )}
-        {/* ---- End: Render Markers ---- */}
-
       </MapView>
 
-      <Animated.View
-        style={[
-          styles.detailsPanel,
-          { transform: [{ translateY: panelY }] },
-        ]}
-        {...panResponder.panHandlers}
-      >
-          <View style={styles.handleIndicatorContainer}>
-              <View style={styles.handleIndicator} />
+            {/* --- Overlays Container --- */}
+            <View style={styles.overlayContainer}>
+                {/* --- NEW Wave Slider --- */} 
+                <View style={styles.waveSliderOuterContainer}>
+                     <View style={styles.waveSliderInnerContainer}>
+                        {/* Summary Button */} 
+                         <TouchableOpacity style={styles.waveNavButton} onPress={handleSelectSummary}>
+                            <Ionicons name="list-outline" size={24} color={selectedWaveIndex === -1 ? colors.white : colors.textPrimary} />
+                         </TouchableOpacity>
+
+                        {/* Previous Button */} 
+                        <TouchableOpacity style={styles.waveNavButton} onPress={handleSelectPrevious}>
+                             <Ionicons name="chevron-back-outline" size={26} color={colors.textPrimary} />
+                        </TouchableOpacity>
+
+                        {/* Slider Track / Text Indicator */} 
+                        <View style={styles.waveSliderTrack}>
+                             {/* Optional: Add a visual progress bar background */} 
+                             <View style={styles.waveSliderProgressBackground} /> 
+                             {/* Optional: Add a visual progress bar foreground */} 
+                             {displayableWaves.length > 0 && (
+                                 <View style={[styles.waveSliderProgressForeground, {
+                                     width: `${((selectedWaveIndex + 1) / displayableWaves.length) * 100}%`
+                                 }]} /> 
+                             )}
+                             {/* Text Indicator */} 
+                             <Text style={styles.waveSliderText}>
+                                {selectedWaveIndex === -1 ? 
+                                    "Session Summary" : 
+                                    `Wave ${selectedWaveIndex + 1} / ${displayableWaves.length}`
+                                }
+                             </Text>
           </View>
-         <View style={styles.panelContentContainer}>
-             {waves.length > 0 ? (
-                 <>
-                    <View style={styles.sliderContainer}>
-                         <Text style={styles.sliderLabel}>
-                            {isDisplaySummary ? "Session Summary" : `Wave ${sliderDisplayIndex + 1} / ${waves.length}`}
-                         </Text>
-                         <Slider
-                            style={styles.slider}
-                            minimumValue={-1}
-                            maximumValue={waves.length - 1}
-                            step={1}
-                            value={sliderDisplayIndex}
-                            onValueChange={handleSliderValueUpdate}
-                            onSlidingComplete={handleSlidingComplete}
-                            minimumTrackTintColor={colors.primaryBlue}
-                            maximumTrackTintColor={colors.sliderMax}
-                            thumbTintColor={colors.primaryBlue}
-                         />
+
+                         {/* Next Button */} 
+                         <TouchableOpacity style={styles.waveNavButton} onPress={handleSelectNext}>
+                             <Ionicons name="chevron-forward-outline" size={26} color={colors.textPrimary} />
+                        </TouchableOpacity>
+                    </View>
                     </View>
 
-                    {/* --- Conditional Stats Grid (Uses selectedWaveIndex for data) --- */}
-                    <View style={styles.statsGrid}>
-                        {isSummaryActive ? (
-                            <>
-                                {/* Summary Stats - First Row (existing) */}
-                                <WaveStatCard label="Total Waves" value={summaryStats.count.toString()} gradientColors={[colors.primaryBlue, colors.lightBlue]} iconName="water-outline" />
-                                <WaveStatCard label="Avg Duration" value={summaryStats.avgDuration.toFixed(0)} unit="sec" gradientColors={[colors.secondaryBlue, colors.primaryBlue]} iconName="time-outline" />
-                                <WaveStatCard label="Avg Speed" value={summaryStats.avgAvgSpeed.toFixed(1)} unit="mph" gradientColors={[colors.lightBlue, colors.primaryBlue]} iconName="speedometer-outline" />
-                                <WaveStatCard label="Avg Top Speed" value={summaryStats.avgTopSpeed.toFixed(1)} unit="mph" gradientColors={[colors.secondaryBlue, colors.lightBlue]} iconName="flash-outline" />
-                                
-                                {/* Summary Stats - Additional Metrics */}
-                                <WaveStatCard 
-                                    label="Total Distance" 
-                                    value={waves.reduce((sum, wave) => sum + calculatePathDistance(wave.coordinates), 0).toFixed(0)} 
-                                    unit="m" 
-                                    gradientColors={[colors.green, colors.primaryBlue]} 
-                                    iconName="map-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Total Time" 
-                                    value={(waves.reduce((sum, wave) => sum + (wave.duration || 0), 0) / 60).toFixed(1)} 
-                                    unit="min" 
-                                    gradientColors={[colors.orange, colors.secondaryBlue]} 
-                                    iconName="hourglass-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Longest Wave" 
-                                    value={Math.max(...waves.map(wave => wave.duration || 0)).toFixed(0)} 
-                                    unit="sec" 
-                                    gradientColors={[colors.primaryBlue, colors.green]} 
-                                    iconName="analytics-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Fastest Wave" 
-                                    value={Math.max(...waves.map(wave => wave.topSpeed || 0)).toFixed(1)} 
-                                    unit="mph" 
-                                    gradientColors={[colors.red, colors.orange]} 
-                                    iconName="flash-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Avg Distance" 
-                                    value={(waves.reduce((sum, wave) => sum + calculatePathDistance(wave.coordinates), 0) / (waves.length || 1)).toFixed(0)} 
-                                    unit="m" 
-                                    gradientColors={[colors.green, colors.lightBlue]} 
-                                    iconName="navigate-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Longest Distance" 
-                                    value={Math.max(...waves.map(wave => calculatePathDistance(wave.coordinates))).toFixed(0)} 
-                                    unit="m" 
-                                    gradientColors={[colors.secondaryBlue, colors.green]} 
-                                    iconName="resize-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Session Length" 
-                                    value={waves.length > 0 ? 
-                                        ((waves[waves.length-1].endTime.toDate().getTime() - waves[0].startTime.toDate().getTime()) / 60000).toFixed(0) 
-                                        : "0"} 
-                                    unit="min" 
-                                    gradientColors={[colors.primaryBlue, colors.orange]} 
-                                    iconName="calendar-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Waves/Hour" 
-                                    value={waves.length > 0 ? 
-                                        (waves.length / ((waves[waves.length-1].endTime.toDate().getTime() - waves[0].startTime.toDate().getTime()) / 3600000)).toFixed(1) 
-                                        : "0"} 
-                                    gradientColors={[colors.orange, colors.red]} 
-                                    iconName="trending-up-outline" 
-                                />
-                            </>
-                        ) : selectedWaveRaw ? (
-                            <>
-                                {/* Selected Wave Stats - First Row (existing) */}
-                                <WaveStatCard label="Duration" value={selectedWaveRaw.duration?.toFixed(0) ?? '0'} unit="sec" gradientColors={[colors.primaryBlue, colors.lightBlue]} iconName="time-outline" />
-                                <WaveStatCard label="Avg Speed" value={selectedWaveRaw.averageSpeed?.toFixed(1) ?? '0'} unit="mph" gradientColors={[colors.secondaryBlue, colors.primaryBlue]} iconName="speedometer-outline" />
-                                <WaveStatCard label="Top Speed" value={selectedWaveRaw.topSpeed?.toFixed(1) ?? '0'} unit="mph" gradientColors={[colors.lightBlue, colors.primaryBlue]} iconName="flash-outline" />
-                                <WaveStatCard label="Start Time" value={selectedWaveRaw.startTime?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) ?? '-'} gradientColors={[colors.secondaryBlue, colors.lightBlue]} iconName="stopwatch-outline" />
-                                
-                                {/* Selected Wave Stats - Additional Metrics */}
-                                <WaveStatCard 
-                                    label="Distance" 
-                                    value={calculatePathDistance(selectedWaveRaw.coordinates).toFixed(0)} 
-                                    unit="m" 
-                                    gradientColors={[colors.green, colors.lightBlue]} 
-                                    iconName="navigate-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="End Time" 
-                                    value={selectedWaveRaw.endTime?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) ?? '-'} 
-                                    gradientColors={[colors.orange, colors.secondaryBlue]} 
-                                    iconName="flag-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Efficiency" 
-                                    value={((calculatePathDistance(selectedWaveRaw.coordinates) / (selectedWaveRaw.duration || 1)) * 3.6).toFixed(1)} 
-                                    unit="km/h" 
-                                    gradientColors={[colors.primaryBlue, colors.green]} 
-                                    iconName="trending-up-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Wave #" 
-                                    value={`${selectedWaveIndex + 1} of ${waves.length}`} 
-                                    gradientColors={[colors.red, colors.orange]} 
-                                    iconName="layers-outline" 
-                                />
-                                {selectedWaveRaw.coordinates && selectedWaveRaw.coordinates.length >= 2 && (
-                                    <WaveStatCard 
-                                        label="Direction" 
-                                        value={(() => {
-                                            const first = selectedWaveRaw.coordinates?.[0];
-                                            const last = selectedWaveRaw.coordinates?.[selectedWaveRaw.coordinates.length - 1];
-                                            if (!first || !last) return "-";
-                                            const bearing = Math.atan2(
-                                                last.longitude - first.longitude, 
-                                                last.latitude - first.latitude
-                                            ) * (180 / Math.PI);
-                                            const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-                                            const index = Math.round(((bearing + 360) % 360) / 45) % 8;
-                                            return directions[index];
-                                        })()} 
-                                        gradientColors={[colors.secondaryBlue, colors.green]} 
-                                        iconName="compass-outline" 
-                                    />
-                                )}
-                                <WaveStatCard 
-                                    label="Relative Speed" 
-                                    value={((selectedWaveRaw.averageSpeed || 0) / summaryStats.avgAvgSpeed * 100).toFixed(0)} 
-                                    unit="%" 
-                                    gradientColors={[colors.green, colors.orange]} 
-                                    iconName="stats-chart-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Speed Diff" 
-                                    value={((selectedWaveRaw.topSpeed || 0) - (selectedWaveRaw.averageSpeed || 0)).toFixed(1)} 
-                                    unit="mph" 
-                                    gradientColors={[colors.orange, colors.red]} 
-                                    iconName="pulse-outline" 
-                                />
-                                <WaveStatCard 
-                                    label="Time of Day" 
-                                    value={selectedWaveRaw.startTime?.toDate().getHours() < 12 ? "Morning" : 
-                                            selectedWaveRaw.startTime?.toDate().getHours() < 17 ? "Afternoon" : "Evening"} 
-                                    gradientColors={[colors.primaryBlue, colors.lightBlue]} 
-                                    iconName="sunny-outline" 
-                                />
-                            </>
-                        ) : null /* Should not happen if !isSummaryActive */}
-                    </View>
-                 </>
+                {/* --- Primary Metrics Box --- */} 
+                <View style={styles.primaryMetricsContainer}>
+                    {selectedWaveIndex === -1 ? (
+                        // Session Summary Primary Stats
+                        summaryStats ? (
+                            <View style={styles.primaryStatsGrid}>
+                                <PrimaryStat icon="water-outline" label="Total Waves" value={summaryStats.count.toString()} />
+                                <PrimaryStat icon="map-outline" label="Total Distance" value={summaryStats.totalDistance.toFixed(0)} unit="m" />
+                                <PrimaryStat icon="flash-outline" label="Best Speed" value={summaryStats.bestMaxSpeed.toFixed(1)} unit="mph" />
+                                <PrimaryStat icon="stopwatch-outline" label="Total Wave Time" value={formatDuration(summaryStats.totalDuration)} />
+                            </View>
              ) : (
-                 <Text style={styles.noWavesText}>No wave data available for this session.</Text>
+                            <Text style={styles.noStatsText}>No Summary Available</Text> 
+                        )
+                    ) : (
+                        // Selected Wave Primary Stats
+                        selectedWave ? (
+                            <View style={styles.primaryStatsGrid}>
+                                <PrimaryStat icon="flag-outline" label="Wave #" value={`${selectedWaveIndex + 1} / ${displayableWaves.length}`} />
+                                <PrimaryStat icon="navigate-outline" label="Distance" value={calculatePathDistance(selectedWave.coordinates).toFixed(0)} unit="m" />
+                                <PrimaryStat icon="flash-outline" label="Max Speed" value={selectedWave.topSpeed.toFixed(1)} unit="mph" />
+                                <PrimaryStat icon="time-outline" label="Duration" value={formatDuration(selectedWave.duration)} />
+                            </View>
+                        ) : (
+                            <Text style={styles.noStatsText}>No Wave Data</Text>
+                        )
              )}
          </View>
-      </Animated.View>
+            </View>
+        </View>
+        
+         {/* --- Modalize Bottom Sheet (Stays outside the map container) --- */}
+         <Modalize
+            ref={modalizeRef}
+            adjustToContentHeight
+            handleStyle={styles.modalHandle}
+            modalStyle={styles.modalContainer}
+            HeaderComponent={
+                <View style={styles.modalHeader}>
+                    <Text style={styles.modalTitle}>
+                         {selectedWaveIndex === -1 ? 'Session Summary' : `Wave ${selectedWaveIndex + 1} Details`}
+                    </Text>
+                </View>
+            }
+        >
+            <ScrollView contentContainerStyle={styles.panelContentContainer}>
+                 {selectedWaveIndex === -1 ? (
+                    // Session Summary View
+                    summaryStats ? (
+                        <View>
+                            <StatRow icon="water-outline" label="Total Waves" value={summaryStats.count.toString()} />
+                            <StatRow icon="stopwatch-outline" label="Total Wave Time" value={formatDuration(summaryStats.totalDuration)} />
+                            <StatRow icon="calendar-outline" label="Session Length" value={formatDuration(summaryStats.sessionLengthSeconds)} />
+                            <StatRow icon="time-outline" label="Avg Wave Duration" value={formatDuration(summaryStats.avgDuration)} />
+                            <StatRow icon="speedometer-outline" label="Avg Max Speed" value={summaryStats.avgMaxSpeed.toFixed(1)} unit="mph" />
+                            <StatRow icon="flash-outline" label="Best Max Speed" value={summaryStats.bestMaxSpeed.toFixed(1)} unit="mph" />
+                            <StatRow icon="map-outline" label="Total Distance" value={summaryStats.totalDistance.toFixed(0)} unit="m" />
+                            {/* Add more summary stats if desired */}
+                        </View>
+                    ) : (
+                        <Text style={styles.noStatsText}>No wave data to summarize.</Text>
+                    )
+                 ) : (
+                    // Individual Wave View
+                     selectedWave ? (
+                         <View>
+                            <StatRow icon="time-outline" label="Duration" value={formatDuration(selectedWave.duration)} />
+                            <StatRow icon="flash-outline" label="Max Speed" value={selectedWave.topSpeed.toFixed(1)} unit="mph" />
+                            <StatRow icon="speedometer-outline" label="Avg Speed" value={selectedWave.averageSpeed.toFixed(1)} unit="mph" />
+                            <StatRow icon="navigate-outline" label="Distance" value={calculatePathDistance(selectedWave.coordinates).toFixed(0)} unit="m" />
+                            <StatRow icon="play-back-circle-outline" label="Start Time" value={formatTimestamp(selectedWave.startTime)} />
+                            <StatRow icon="play-forward-circle-outline" label="End Time" value={formatTimestamp(selectedWave.endTime)} />
     </View>
+                     ) : (
+                         <Text style={styles.noStatsText}>Wave data not available.</Text>
+                     )
+                 )}
+            </ScrollView>
+        </Modalize>
+    </GestureHandlerRootView>
   );
 };
 
 // --- Styles ---
 const styles = StyleSheet.create({
-  screenContainer: {
+  container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.background, // Fallback background
   },
-  mapView: {
+  map: {
+     // Make map fill the container initially
     ...StyleSheet.absoluteFillObject,
   },
-  detailsPanel: {
+  overlayContainer: {
     position: 'absolute',
+      // Position above the bottom sheet handle/peek area
+      bottom: BOTTOM_SHEET_PEEK_HEIGHT, 
     left: 0,
     right: 0,
-    top: 0,
-    height: screenHeight - PANEL_UP_POSITION + 30,
-    backgroundColor: colors.cardBackground,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    elevation: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.15,
-    shadowRadius: 6,
-    overflow: 'hidden',
-  },
-  handleIndicatorContainer: {
-      alignItems: 'center',
-      paddingVertical: 8,
-  },
-  handleIndicator: {
-      width: 50,
-      height: 5,
-      backgroundColor: colors.inputBorder,
-      borderRadius: 3,
-  },
-  panelContentContainer: {
-      paddingHorizontal: 20,
-      paddingTop: 0,
-      paddingBottom: 40,
-  },
-  sliderContainer: {
-      marginBottom: 15,
       alignItems: 'center',
   },
-  sliderLabel: {
-      fontSize: 16,
+  loadingContainer: {
+     flex: 1,
+     justifyContent: 'center',
+     alignItems: 'center',
+     backgroundColor: colors.background,
+  },
+  errorContainer: {
+     flex: 1,
+     justifyContent: 'center',
+      alignItems: 'center',
+     padding: 20,
+  },
+  errorText: {
+     fontSize: 16,
+     color: colors.red,
+     textAlign: 'center',
+  },
+  waveSliderOuterContainer: {
+      width: '90%', // Take most of screen width
+      marginBottom: 10, // Space between slider and metrics box
+  },
+  waveSliderInnerContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: 'rgba(255, 255, 255, 0.85)', // Opaque white background
+      borderRadius: 30, // Fully rounded ends
+      paddingHorizontal: 5,
+      paddingVertical: 5,
+      height: WAVE_SELECTOR_HEIGHT, // Fixed height
+      // Add shadow for depth
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2, },
+      shadowOpacity: 0.15,
+      shadowRadius: 4,
+      elevation: 4,
+  },
+  waveNavButton: {
+      paddingHorizontal: 15,
+      height: '100%',
+      justifyContent: 'center',
+      alignItems: 'center',
+  },
+  waveSliderTrack: {
+      flex: 1, // Take remaining space
+      height: '80%', // Slightly smaller than container
+      backgroundColor: 'rgba(0, 0, 0, 0.05)', // Faint track background
+      borderRadius: 20,
+      justifyContent: 'center',
+      alignItems: 'center',
+      position: 'relative', // For absolute positioning of progress bars
+      overflow: 'hidden', // Clip progress bars
+      marginHorizontal: 5,
+  },
+   waveSliderProgressBackground: {
+       ...StyleSheet.absoluteFillObject, // Optional full background
+       backgroundColor: 'rgba(0, 0, 0, 0.05)', 
+   },
+   waveSliderProgressForeground: {
+       position: 'absolute',
+       left: 0,
+       top: 0,
+       bottom: 0,
+       backgroundColor: colors.primaryBlue, // Progress color
+       borderRadius: 20,
+   },
+  waveSliderText: {
+      fontSize: 14,
       fontWeight: '600',
       color: colors.textPrimary,
-      marginBottom: 5,
+      zIndex: 1, // Ensure text is above progress bars
   },
-  slider: {
-    width: '100%',
-    height: 40,
+  primaryMetricsContainer: {
+      width: '90%', 
+      // height: PRIMARY_METRICS_HEIGHT, // Height will be dynamic based on content
+      backgroundColor: colors.cardBackground,
+      borderRadius: 15,
+      padding: 15,
+      shadowColor: "#000",
+      shadowOffset: { width: 0, height: 2, },
+      shadowOpacity: 0.1,
+      shadowRadius: 3,
+      elevation: 3,
+      // Remove center alignment, grid will handle layout
+      // justifyContent: 'center',
+      // alignItems: 'center',
   },
-  statsGrid: {
+  primaryStatsGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginTop: 10,
   },
-  waveStatCard: {
-    width: '48%',
-    borderRadius: 12,
-    paddingVertical: 12,
-    paddingHorizontal: 10,
-    marginBottom: 15,
+  primaryStatItem: {
+      width: '48%', // Two items per row with slight gap
+      flexDirection: 'row',
     alignItems: 'center',
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 3,
+      marginBottom: 10, // Space between rows
   },
-  statIcon: {
-    marginBottom: 6,
+  primaryStatIcon: {
+      marginRight: 8,
   },
-  statLabel: {
+  primaryStatValue: {
+      fontSize: 16,
+      fontWeight: 'bold',
+      color: colors.textPrimary,
+  },
+  primaryStatUnit: {
+      fontSize: 12,
+      fontWeight: 'normal',
+      color: colors.textSecondary,
+  },
+  primaryStatLabel: {
     fontSize: 12,
-    color: colors.white,
-    opacity: 0.9,
-    marginBottom: 3,
+      color: colors.textSecondary,
   },
-   statValueContainer: {
-       flexDirection: 'row',
-       alignItems: 'baseline',
-   },
-  statValueText: {
+  modalContainer: {
+      borderTopLeftRadius: 25,
+      borderTopRightRadius: 25,
+      backgroundColor: colors.cardBackground,
+      paddingBottom: Platform.OS === 'ios' ? 30 : 20,
+  },
+  modalHandle: {
+      width: 40,
+      height: 5,
+      backgroundColor: colors.inputBorder,
+      borderRadius: 2.5,
+      marginTop: 10,
+  },
+  modalHeader: {
+     paddingVertical: 15,
+     paddingHorizontal: 20,
+     borderBottomWidth: 1,
+     borderBottomColor: colors.inputBorder,
+     backgroundColor: colors.cardBackground,
+     borderTopLeftRadius: 25,
+     borderTopRightRadius: 25,
+  },
+  modalTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: colors.white,
-  },
-  statUnitText: {
-      fontSize: 11,
-      fontWeight: '500',
-      color: colors.white,
-      marginLeft: 3,
-      opacity: 0.8,
-  },
-  fullScreenLoader: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: colors.background,
-  },
-  errorText: {
-     flex: 1,
+     color: colors.textPrimary,
      textAlign: 'center',
-     marginTop: 50,
-     color: colors.red,
-     fontSize: 16,
-     paddingHorizontal: 20,
   },
-   noWavesText: {
-       textAlign: 'center',
-       marginTop: 30,
-       fontSize: 16,
+  panelContentContainer: {
+       paddingVertical: 20,
+       paddingHorizontal: 20,
+  },
+  statRow: {
+     flexDirection: 'row',
+    alignItems: 'center',
+     paddingVertical: 12,
+     borderBottomWidth: 1,
+     borderBottomColor: colors.background,
+  },
+  statRowIcon: {
+      marginRight: 15,
+  },
+  statRowLabel: {
+     flex: 1,
+     fontSize: 15,
+     color: colors.textPrimary,
+  },
+  statRowValue: {
+     fontSize: 15,
+     fontWeight: 'bold',
+     color: colors.textPrimary,
+     textAlign: 'right',
+  },
+  statRowUnit: {
+     fontSize: 13,
+     fontWeight: 'normal',
        color: colors.textSecondary,
    },
-  customMarker: {
-      width: 10,
-      height: 10,
-      borderRadius: 5,
-      borderWidth: 1,
-      borderColor: 'rgba(255, 255, 255, 0.7)',
-  },
+  noStatsText: {
+      textAlign: 'center',
+      paddingVertical: 10,
+      fontSize: 14,
+      color: colors.textSecondary,
+  }
 });
 
 export default SessionDetailScreen; 
