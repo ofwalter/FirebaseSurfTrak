@@ -17,6 +17,7 @@ import ForecastScreen from '../screens/ForecastScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import SessionDetailScreen from '../screens/SessionDetailScreen'; // Import the new detail screen
 import GoalsScreen from '../screens/GoalsScreen'; // Import Goals Screen
+import SettingsScreen from '../screens/SettingsScreen'; // Import Settings Screen
 
 // Define Stack types
 export type AuthStackParamList = {
@@ -37,7 +38,8 @@ export type AppStackParamList = {
   AppTabs: undefined; // Represents the entire Bottom Tab Navigator
   SessionDetail: { sessionId: string; sessionLocation: string }; // Screen for session details
   Goals: undefined; // Add Goals screen to the stack parameters
-  // Add other non-tab screens here (e.g., Settings, Edit Profile)
+  Settings: undefined; // Add Settings screen
+  // Add other non-tab screens here (e.g., Edit Profile)
 };
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
@@ -139,6 +141,15 @@ const AppStackNavigator = () => {
          component={GoalsScreen}
          options={{ 
              title: "Your Goals", // Set header title
+             headerBackTitle: "Back",
+          }}
+       />
+       {/* Add Settings Screen to the stack */}
+       <AppStack.Screen
+         name="Settings"
+         component={SettingsScreen}
+         options={{ 
+             title: "Settings", 
              headerBackTitle: "Back",
           }}
        />

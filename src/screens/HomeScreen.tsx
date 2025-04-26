@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -18,6 +18,7 @@ import { collection, query, where, getDocs, Timestamp, onSnapshot, doc, getDoc }
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AppStackParamList } from '../navigation/AppNavigator';
+import { useNavigation } from '@react-navigation/native';
 
 const { width: screenWidth } = Dimensions.get('window');
 const CARD_WIDTH = screenWidth * 0.35;
@@ -36,11 +37,18 @@ const colors = {
   textSecondary: '#6b7280',
   white: '#ffffff',
   iconBlue: '#1A73E8', // Color for settings icon background
+  completedGreen: '#10B981',
 };
 
 // --- Reusable Components (Defined inline for simplicity) ---
 
-const TopBar = () => (
+// Update TopBar to receive navigation prop
+// Use the specific navigation type from HomeScreen
+interface TopBarProps {
+  navigation: HomeScreenNavigationProp;
+}
+
+const TopBar = ({ navigation }: TopBarProps) => (
   <BlurView intensity={80} tint="light" style={styles.topBarContainer}>
     <View style={styles.topBarContent}>
       {/* Use actual Profile Photo - Corrected Path */}
@@ -56,8 +64,11 @@ const TopBar = () => (
         style={styles.logoImage}
       />
 
-      {/* Settings Button */}
-      <TouchableOpacity style={styles.settingsButton}>
+      {/* Settings Button - Add onPress handler */}
+      <TouchableOpacity 
+        style={styles.settingsButton}
+        onPress={() => navigation.navigate('Settings')}
+      >
         <Ionicons name="settings-outline" size={24} color={colors.primaryBlue} />
       </TouchableOpacity>
     </View>
@@ -65,17 +76,13 @@ const TopBar = () => (
 );
 
 interface GoalCardProps {
-  currentWaves: number;
-  goalWaves: number;
-  daysLeft: number; // Keep static for now
+  goal: DisplayGoal | null; // Can be null if all completed or none to feature
+  allCompleted: boolean;
+  // Remove daysLeft, currentWaves, goalWaves - derived from goal object
 }
 
-const GoalCard = ({ currentWaves, goalWaves, daysLeft }: GoalCardProps) => {
-   const progress = goalWaves > 0 ? Math.min(currentWaves / goalWaves, 1) : 0;
-   const progressBarPixelWidth = GOAL_CARD_CONTENT_WIDTH * progress;
-   const wavesToGo = Math.max(0, goalWaves - currentWaves);
-
-   // Define encouragement messages (keep these constant)
+const GoalCard = ({ goal, allCompleted }: GoalCardProps) => {
+   // --- State for rotating message (keep as is) ---
    const encouragementMessages = [
         "Keep paddling.",
         "Focus on the next wave.",
@@ -84,59 +91,111 @@ const GoalCard = ({ currentWaves, goalWaves, daysLeft }: GoalCardProps) => {
         "Push your limits.",
         "Stay committed.",
         "Ride it out.",
+        "One more!",
+        "You got this!"
    ];
-
-   // State to hold the index of the current message
    const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
 
-   // Effect to handle the rotating message interval
+   // --- Calculate progress and values based on the goal prop ---
+   const isTrulyCompleted = goal ? goal.completed : false;
+   const progress = goal && goal.target > 0 ? Math.min(goal.progress / goal.target, 1) : (isTrulyCompleted ? 1 : 0);
+   const progressPercent = Math.round(progress * 100);
+   // Use goal?.target, goal?.progress safely
+   const targetValue = goal?.target ?? 0;
+   const currentValue = goal?.progress ?? 0;
+
+   // --- Effect for rotating message ---
    useEffect(() => {
        let intervalId: NodeJS.Timeout | null = null;
-
-       if (wavesToGo > 0) {
-           // Start interval only if goal is not met
+        // Rotate only if there's an incomplete goal being displayed
+       if (goal && !isTrulyCompleted && !allCompleted) {
            intervalId = setInterval(() => {
                setCurrentMessageIndex(prevIndex => 
                    (prevIndex + 1) % encouragementMessages.length
                );
-           }, 4000); // Rotate every 4 seconds
+           }, 4000); 
        } else {
-            // Reset index if goal is met (optional, but good practice)
-            setCurrentMessageIndex(0); 
+            setCurrentMessageIndex(0); // Reset if completed or no goal
        }
-
-       // Cleanup function to clear the interval
        return () => {
-           if (intervalId) {
-               clearInterval(intervalId);
-           }
+           if (intervalId) clearInterval(intervalId);
        };
-   // Dependency array: re-run effect if wavesToGo changes (e.g., goal met)
-   }, [wavesToGo]); 
+   // Depend on whether there is a goal and its completion state
+   }, [goal, isTrulyCompleted, allCompleted]); 
 
-   // Determine the motivation message based on goal status and state
-   const motivationMessage = wavesToGo <= 0
-       ? "Goal achieved! Amazing work! 🎉"
-       : encouragementMessages[currentMessageIndex];
+    // --- Determine display content ---
+    let title = "Today's Focus";
+    let subtitle = "Keep going!";
+    let progressText = "";
+    let motivationMessage = encouragementMessages[currentMessageIndex];
+    let gradientColors: readonly [string, string, ...string[]] = [colors.secondaryBlue, colors.primaryBlue, colors.lightBlue]; // Default gradient
+
+    // Formatting helper (copied from GoalsScreen - ideally move to utils)
+    const formatValue = (value: number, metric?: GoalDefinition['metric']): string => {
+        if (!metric) return value.toLocaleString();
+        if (metric === 'sessionDuration' || metric === 'longestWaveDuration') {
+            const minutes = Math.floor(value / 60);
+            const seconds = value % 60;
+            if (minutes > 0) return `${minutes}m ${seconds}s`;
+            return `${seconds}s`;
+        }
+        if (metric === 'topSpeed') {
+            return `${value.toFixed(1)} mph`; 
+        }
+        return value.toLocaleString();
+    };
+
+    if (allCompleted) {
+        title = "Goals Cleared!";
+        subtitle = "Awesome job today!";
+        progressText = "All goals met! 🔥";
+        motivationMessage = "Time to relax or shred freely!";
+        gradientColors = ['#10B981', '#059669', '#047857'] as const; 
+    } else if (goal) {
+        title = goal.type === 'daily' ? "Daily Goal" : "Weekly Goal";
+        subtitle = goal.description;
+        progressText = `${formatValue(currentValue, goal.metric)} / ${formatValue(targetValue, goal.metric)}`;
+        if (isTrulyCompleted) { // If THIS specific goal is done, but not all
+            motivationMessage = "Nice one! What's next?";
+            gradientColors = ['#6b7280', '#4b5563', '#374151'] as const; // Grey gradient for completed focus
+        } else {
+             motivationMessage = encouragementMessages[currentMessageIndex]; // Use rotating message
+        }
+    } else {
+        // Case: No goals assigned or available to feature
+        title = "No Active Goals";
+        subtitle = "Check the Goals tab later!";
+        progressText = "-";
+        motivationMessage = "Go enjoy the surf!";
+        gradientColors = ['#6b7280', '#4b5563', '#374151'] as const; // Grey gradient
+    }
 
    return (
       <LinearGradient
-        colors={[colors.secondaryBlue, colors.primaryBlue, colors.lightBlue]}
+        colors={gradientColors} // Use dynamic gradient
         style={styles.goalCard}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
       >
         <View style={styles.goalCardHeader}>
-          <Text style={styles.goalCardTitle}>Weekly Goal</Text>
-          <Text style={styles.goalCardSubtitle}>{daysLeft} days left</Text>
+          <Text style={styles.goalCardTitle}>{title}</Text>
+          <Text style={styles.goalCardSubtitle}>{subtitle}</Text>
+          {/* Keep options button, maybe link to Goals screen? */}
           <TouchableOpacity style={styles.goalOptionsButton}>
               <Ionicons name="ellipsis-horizontal-outline" size={20} color={colors.white} />
           </TouchableOpacity>
         </View>
-        <Text style={styles.goalCardWaves}>{currentWaves}/{goalWaves} waves</Text>
-        <View style={styles.progressBarBackground}>
-          <View style={[styles.progressBarForeground, { width: progressBarPixelWidth }]} />
-        </View>
+        {/* Conditionally render progress bar and text */} 
+        {!allCompleted && goal && (
+             <View style={styles.progressBarBackground}>
+                 <View style={[styles.progressBarForeground, 
+                     { width: `${progressPercent}%` },
+                     // Use specific color for completed individual goal bar
+                     isTrulyCompleted && { backgroundColor: colors.completedGreen } 
+                 ]} />
+             </View>
+        )}
+        <Text style={styles.goalCardWaves}>{progressText}</Text>
         <Text style={styles.goalCardMotivation}>{motivationMessage}</Text>
       </LinearGradient>
    );
@@ -188,6 +247,7 @@ interface UserProfileBaseData {
     activeGoals: { [key: string]: { progress: number; completed: boolean; lastReset?: Timestamp } };
     // Fetched rank details
     currentRankName?: string; 
+    currentRankThreshold?: number;
     nextRankThreshold?: number;
 }
 
@@ -292,20 +352,31 @@ interface RankData {
 interface RankCardProps {
     rankName?: string;
     currentXp?: number;
+    currentRankThreshold?: number;
     nextRankXp?: number;
 }
 
-const RankCard = ({ rankName = "Rookie", currentXp = 0, nextRankXp = 100 }: RankCardProps) => {
-    const progress = nextRankXp > 0 ? Math.min(currentXp / nextRankXp, 1) : 1; // Handle divide by zero or 100% progress
-    const progressPercent = Math.round(progress * 100);
-    const xpNeeded = Math.max(0, nextRankXp - currentXp);
+const RankCard = ({ 
+    rankName = "Rookie", 
+    currentXp = 0, 
+    currentRankThreshold = 0,
+    nextRankXp = 100 
+}: RankCardProps) => {
+    // Calculate progress within the current rank range
+    const xpInCurrentRank = Math.max(0, currentXp - currentRankThreshold);
+    const xpRangeForRank = Math.max(1, nextRankXp - currentRankThreshold); // Avoid division by zero
+    const isMaxRank = currentXp === nextRankXp; // Check if user might be at max rank (where next = current)
+
+    const progress = isMaxRank ? 1 : Math.min(xpInCurrentRank / xpRangeForRank, 1);
+    const progressPercent = isMaxRank ? 100 : Math.round(progress * 100);
+    const xpNeeded = isMaxRank ? 0 : Math.max(0, nextRankXp - currentXp);
 
     return (
         <View style={styles.rankCardContainer}>
             <View style={styles.rankHeader}>
                 <Ionicons name="shield-checkmark-outline" size={24} color={colors.primaryBlue} style={styles.rankIcon} />
                 <Text style={styles.rankTitle}>{rankName}</Text>
-                <Text style={styles.rankLevelText}>Level {progressPercent}%</Text> 
+                <Text style={styles.rankLevelText}>{isMaxRank ? "Max Rank" : `Level ${progressPercent}%`}</Text> 
             </View>
             <View style={styles.rankProgressBarBackground}>
                 <LinearGradient
@@ -317,11 +388,35 @@ const RankCard = ({ rankName = "Rookie", currentXp = 0, nextRankXp = 100 }: Rank
             </View>
             <View style={styles.rankXpContainer}>
                 <Text style={styles.rankXpText}>{currentXp.toLocaleString()} XP</Text>
-                <Text style={styles.rankXpNeededText}>({xpNeeded.toLocaleString()} XP to next rank)</Text>
+                {!isMaxRank && (
+                     <Text style={styles.rankXpNeededText}>({xpNeeded.toLocaleString()} XP to next rank)</Text>
+                 )}
+                 {isMaxRank && (
+                    <Text style={styles.rankXpNeededText}>(Max Rank Achieved)</Text>
+                )}
             </View>
         </View>
     );
 };
+
+// --- Interfaces --- (Add Goal/Progress interfaces, similar to GoalsScreen)
+interface GoalDefinition {
+    goalId: string;
+    description: string;
+    type: "daily" | "weekly" | "lifetime";
+    metric: "waveCount" | "sessionCount" | "sessionDuration" | "longestWaveDuration" | "topSpeed"; 
+    target: number;
+    xpReward: number;
+}
+
+interface ActiveGoalProgress {
+    progress: number;
+    completed: boolean;
+    lastReset?: Timestamp;
+}
+
+// Combined type for display
+interface DisplayGoal extends GoalDefinition, ActiveGoalProgress { }
 
 // --- HomeScreen Implementation ---
 
@@ -344,6 +439,13 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
       totalWaves: 0, totalTime: 0, avgWavesPerSession: 0,
   });
   
+  // *** NEW STATE for Goals ***
+  const [loadingGoals, setLoadingGoals] = useState(true); // Separate loading for goals
+  const [activeGoalsMap, setActiveGoalsMap] = useState<{ [key: string]: ActiveGoalProgress }>({});
+  const [allGoalDefinitions, setAllGoalDefinitions] = useState<{ [key: string]: GoalDefinition }>({});
+  const [allRankDefinitions, setAllRankDefinitions] = useState<{ [key: string]: RankData }>({});
+  // *** END NEW STATE ***
+
   const weeklyGoal = 100; // Example goal
 
   // Effect 1: Handle Auth State Changes
@@ -360,90 +462,132 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
               totalWaves: 0, totalTime: 0, avgWavesPerSession: 0,
           });
           setLoadingData(false); 
+          // Also reset goal states on logout
+          setActiveGoalsMap({});
+          setLoadingGoals(false);
       }
       setLoadingAuth(false); 
     });
     return () => unsubscribeAuth();
   }, []);
 
-  // Effect 2: Fetch User Profile/Rank Data and Listen to Sessions when User changes
+  // *** NEW Effect: Fetch Goal Definitions (Runs Once) ***
+  useEffect(() => {
+      const fetchGoalDefinitions = async () => {
+          setLoadingGoals(true);
+          try {
+              const goalsCollectionRef = collection(db, 'goals');
+              // Add where clause to only fetch active goals if applicable (optional optimization)
+              // const q = query(goalsCollectionRef, where("isActive", "==", true)); 
+              const goalsSnapshot = await getDocs(goalsCollectionRef); 
+              const definitions: { [key: string]: GoalDefinition } = {};
+              goalsSnapshot.forEach((doc) => {
+                  const data = doc.data();
+                  definitions[doc.id] = { 
+                      goalId: doc.id, 
+                      description: data.description, 
+                      type: data.type, 
+                      metric: data.metric, 
+                      target: data.target, 
+                      xpReward: data.xpReward 
+                  } as GoalDefinition;
+              });
+              setAllGoalDefinitions(definitions);
+          } catch (error) {
+              console.error("Error fetching goal definitions:", error);
+          } 
+          // Consider setting loadingGoals false here only if NOT combined with profile listener
+      };
+      fetchGoalDefinitions();
+  }, []); // Run once on mount
+  // *** END NEW Effect ***
+
+  // Effect 3: Fetch Profile & Listen for Active Goals (Combined for efficiency)
   useEffect(() => {
     if (!currentUser) {
       setLoadingData(false);
-      setUserProfile(null); // Clear profile if no user
-      setLifetimeStats({ // Reset stats state
-          avgSpeed: 0, longestWave: 0, bestSpeed: 0, totalSessions: 0,
-          totalWaves: 0, totalTime: 0, avgWavesPerSession: 0,
-      });
-      return; // Exit if no user
+      setLoadingGoals(false); // Ensure loading stops if no user
+      setUserProfile(null);
+      setActiveGoalsMap({}); // Clear goals map
+      return;
     }
 
     setLoadingData(true);
-    let unsubscribeProfile: (() => void) | null = null;
-    let unsubscribeSessions: (() => void) | null = null;
-
-    // --- Listener for User Profile (XP, Rank) ---
+    setLoadingGoals(true); // Set loading true here
     const userRef = doc(db, 'users', currentUser.uid);
-    unsubscribeProfile = onSnapshot(userRef, async (userDoc) => {
+
+    const unsubscribeProfile = onSnapshot(userRef, async (userDoc) => {
         if (userDoc.exists()) {
             const profileData = userDoc.data() as Partial<UserProfileBaseData>;
+            // --- Fetch Rank details like in ProfileScreen --- 
             const currentRankLevel = profileData.rankLevel ?? 1;
             const currentXp = profileData.xp ?? 0;
-
-            // Fetch current and next rank definitions
-            const currentRankRef = doc(db, 'ranks', String(currentRankLevel));
-            const nextRankRef = doc(db, 'ranks', String(currentRankLevel + 1));
+            
+            let fetchedRankName = 'Rookie'; // Defaults
+            let fetchedCurrentRankThreshold = 0; // Added default for current threshold
+            let fetchedNextRankThreshold = currentXp; // Default to current XP if no next rank
 
             try {
+                const currentRankRef = doc(db, 'ranks', String(currentRankLevel));
+                const nextRankRef = doc(db, 'ranks', String(currentRankLevel + 1));
                 const [currentRankSnap, nextRankSnap] = await Promise.all([
                     getDoc(currentRankRef),
                     getDoc(nextRankRef),
                 ]);
 
-                const rankName = currentRankSnap.exists() ? (currentRankSnap.data() as RankData).name : 'Rookie';
-                const nextRankThreshold = nextRankSnap.exists() ? (nextRankSnap.data() as RankData).xpThreshold : currentXp; 
-
-                // Update ONLY the userProfile state
-                setUserProfile({
-                    uid: profileData.uid ?? currentUser.uid,
-                    name: profileData.name ?? 'User',
-                    email: profileData.email ?? 'No email',
-                    xp: currentXp,
-                    rankLevel: currentRankLevel,
-                    activeGoals: profileData.activeGoals ?? {},
-                    currentRankName: rankName,
-                    nextRankThreshold: nextRankThreshold,
-                });
+                if (currentRankSnap.exists()) {
+                    const currentRankData = currentRankSnap.data() as RankData;
+                    fetchedRankName = currentRankData.name;
+                    fetchedCurrentRankThreshold = currentRankData.xpThreshold; // Assign current threshold
+                }
+                if (nextRankSnap.exists()) {
+                    fetchedNextRankThreshold = (nextRankSnap.data() as RankData).xpThreshold;
+                } else {
+                    // If no next rank, use current XP for max display
+                    // Current threshold remains as fetched (or 0 if rank 1 didn't exist)
+                    fetchedNextRankThreshold = currentXp; 
+                }
             } catch (rankError) {
-                console.error("Error fetching rank data: ", rankError);
-                 setUserProfile({
-                    uid: profileData.uid ?? currentUser.uid,
-                    name: profileData.name ?? 'User',
-                    email: profileData.email ?? 'No email',
-                    xp: currentXp,
-                    rankLevel: currentRankLevel,
-                    activeGoals: profileData.activeGoals ?? {},
-                    currentRankName: 'Rookie',
-                    nextRankThreshold: currentXp,
-                 });
+                 console.error("HomeScreen: Error fetching rank data: ", rankError);
+                 // Use defaults if fetch fails
             }
 
+            setUserProfile({
+                uid: profileData.uid ?? currentUser.uid,
+                name: profileData.name ?? 'User',
+                email: profileData.email ?? 'No email',
+                xp: currentXp,
+                rankLevel: currentRankLevel,
+                activeGoals: profileData.activeGoals ?? {},
+                // Use the fetched values
+                currentRankName: fetchedRankName, 
+                currentRankThreshold: fetchedCurrentRankThreshold, // Added current threshold
+                nextRankThreshold: fetchedNextRankThreshold,
+            });
+            // --- END Rank fetching ---
+
+            // *** Update Active Goals Map State ***
+            setActiveGoalsMap(profileData.activeGoals || {});
+            setLoadingGoals(false); // Goal loading finished
+
         } else {
-            console.log("User profile document does not exist.");
-            setUserProfile(null); // Handle case where profile doesn't exist
+            console.log("User profile document does not exist for UID:", currentUser.uid);
+            setUserProfile(null);
+            setActiveGoalsMap({});
+            setLoadingGoals(false);
         }
-        // Consider moving setLoadingData(false) to after BOTH listeners have run once?
-        // For now, let session listener control final loading state
+        setLoadingData(false); // Profile loading finished
     }, (error) => {
-        console.error("Error listening to user profile: ", error);
-        setUserProfile(null); // Clear profile on error
-        setLoadingData(false); // Stop loading on profile error
+        console.error("Error listening to user profile:", error);
+        setUserProfile(null);
+        setActiveGoalsMap({});
+        setLoadingData(false);
+        setLoadingGoals(false);
     });
 
-    // --- Listener for Sessions (Weekly Waves, Lifetime Stats) ---
-    const sessionsRef = collection(db, 'sessions');
-    const q = query(sessionsRef, where('userId', '==', currentUser.uid));
-    unsubscribeSessions = onSnapshot(q, async (querySnapshot) => {
+    // Separate listener for sessions/stats (keep as is)
+    const sessionsQuery = query(collection(db, "sessions"), where("userId", "==", currentUser.uid));
+    const unsubscribeSessions = onSnapshot(sessionsQuery, async (querySnapshot) => {
         const sessionDocs = querySnapshot.docs;
         const totalSessionsCount = sessionDocs.length;
         let calculatedWeeklyWaves = 0;
@@ -506,35 +650,53 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
                 avgWavesPerSession: avgWavesPerSession,
             });
 
-        } catch (error) {
-            console.error("Error fetching wave data for stats: ", error);
-            // Reset stats on error 
-            setLifetimeStats({ 
-                avgSpeed: 0, longestWave: 0, bestSpeed: 0, 
-                totalSessions: totalSessionsCount, // Keep session count if available
-                totalWaves: lifetimeTotalWavesCount, // Keep wave count if available
-                totalTime: 0, avgWavesPerSession: 0,
-            });
-        } finally {
-             setLoadingData(false); // Mark overall data loading as complete here
+        } catch (waveError) {
+            console.error("Error fetching wave data for lifetime stats:", waveError);
+            // Optionally reset stats or show an error
         }
+
     }, (error) => {
-        console.error("Error in session listener: ", error);
-        setWeeklyWaves(0);
-        setLifetimeStats({ // Reset stats on session listener error
-            avgSpeed: 0, longestWave: 0, bestSpeed: 0, totalSessions: 0,
-            totalWaves: 0, totalTime: 0, avgWavesPerSession: 0,
-        });
-        setLoadingData(false);
+        console.error("Error listening to sessions collection:", error);
+        // Handle error appropriately
     });
 
-    // Cleanup function
     return () => {
-      if (unsubscribeProfile) unsubscribeProfile();
-      if (unsubscribeSessions) unsubscribeSessions();
+        unsubscribeProfile();
+        unsubscribeSessions();
     };
+  }, [currentUser]);
 
-  }, [currentUser]); // Re-run effect if currentUser changes
+  // *** NEW: Process goals to select one for the homepage card ***
+  const { featuredGoal, allDailyWeeklyGoalsCompleted } = useMemo(() => {
+    const activeGoals: DisplayGoal[] = Object.keys(activeGoalsMap)
+      .map(goalId => {
+        const definition = allGoalDefinitions[goalId];
+        const progressData = activeGoalsMap[goalId];
+        if (definition && progressData) {
+          return { ...definition, ...progressData };
+        }
+        return null;
+      })
+      .filter((goal): goal is DisplayGoal => goal !== null);
+
+    const incompleteDailyWeekly = activeGoals.filter(g => 
+        (g.type === 'daily' || g.type === 'weekly') && !g.completed
+    );
+
+    const allCompleted = incompleteDailyWeekly.length === 0 && activeGoals.some(g => g.type === 'daily' || g.type === 'weekly');
+
+    let selectedGoal: DisplayGoal | null = null;
+    if (!allCompleted && incompleteDailyWeekly.length > 0) {
+        // Simple random selection for now
+        selectedGoal = incompleteDailyWeekly[Math.floor(Math.random() * incompleteDailyWeekly.length)];
+    }
+
+    return { 
+        featuredGoal: selectedGoal, 
+        allDailyWeeklyGoalsCompleted: allCompleted 
+    };
+  }, [activeGoalsMap, allGoalDefinitions]);
+  // *** END NEW Goal Processing ***
 
   // --- Render Logic ---
   if (loadingAuth) { // Initial auth check loader
@@ -561,23 +723,24 @@ const HomeScreen = ({ navigation }: HomeScreenProps) => {
   // Main Render when logged in and data is available
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <TopBar />
+      {/* Pass navigation prop to TopBar */}
+      <TopBar navigation={navigation} />
       <ScrollView 
           style={styles.container} 
           showsVerticalScrollIndicator={false}
       >
           <GoalCard 
-              currentWaves={weeklyWaves}
-              goalWaves={weeklyGoal} 
-              daysLeft={7} 
+              goal={featuredGoal}
+              allCompleted={allDailyWeeklyGoalsCompleted}
           />
           {/* Pass separate stats data */}
           <LifetimeStats stats={lifetimeStats} /> 
           <GoalsSection navigation={navigation} /> 
           {/* Pass separate profile data */}
           <RankCard 
-              rankName={userProfile.currentRankName} 
+              rankName={userProfile.currentRankName}
               currentXp={userProfile.xp}
+              currentRankThreshold={userProfile.currentRankThreshold}
               nextRankXp={userProfile.nextRankThreshold}
           />
           <View style={{ height: 50 }} />

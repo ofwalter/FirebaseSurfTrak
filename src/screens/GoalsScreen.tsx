@@ -1,16 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator } from 'react-native';
 import { auth, db } from '../services/firebaseConfig';
 import { User } from 'firebase/auth';
 import { doc, onSnapshot, collection, getDocs, Timestamp } from 'firebase/firestore';
 import { LinearGradient } from 'expo-linear-gradient';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 // --- Interfaces --- 
 interface GoalDefinition {
     goalId: string;
     description: string;
     type: "daily" | "weekly" | "lifetime";
-    metric: "waveCount" | "sessionCount";
+    metric: "waveCount" | "sessionCount" | "sessionDuration" | "longestWaveDuration" | "topSpeed";
     target: number;
     xpReward: number;
 }
@@ -35,7 +36,83 @@ const colors = {
   lightBlue: '#4AB1FF',
   borderLight: '#dee2e6',
   completedGreen: '#16A34A', // Color for completed text
+  progressBg: '#e5e7eb',
+  gold: '#FFD700', // For XP
 };
+
+// --- Reusable Goal Card Component ---
+interface GoalCardProps {
+  goal: DisplayGoal;
+}
+
+const GoalCard = ({ goal }: GoalCardProps) => {
+    const progress = goal.target > 0 ? Math.min(goal.progress / goal.target, 1) : (goal.completed ? 1 : 0);
+    const progressPercent = Math.round(progress * 100);
+    const isCompleted = goal.completed;
+
+    // Helper to format target/progress for readability (e.g., duration in minutes)
+    const formatValue = (value: number, metric: GoalDefinition['metric']): string => {
+        if (metric === 'sessionDuration' || metric === 'longestWaveDuration') {
+            const minutes = Math.floor(value / 60);
+            const seconds = value % 60;
+            if (minutes > 0) return `${minutes}m ${seconds}s`;
+            return `${seconds}s`;
+        } 
+        // Add formatting for speed (mph/kph based on settings eventually)
+        if (metric === 'topSpeed') {
+            return `${value.toFixed(1)} mph`; // Assuming mph for now
+        }
+        // Default: waveCount, sessionCount
+        return value.toLocaleString();
+    };
+
+    return (
+        <View style={[styles.goalCard, isCompleted && styles.goalCardCompleted]}>
+            <View style={styles.goalCardHeader}>
+                 <Text style={styles.goalDescription}>{goal.description}</Text>
+                 <View style={styles.xpContainer}>
+                      <Ionicons name="star" size={14} color={colors.gold} />
+                      <Text style={styles.xpText}>{goal.xpReward} XP</Text>
+                 </View>
+            </View>
+            <View style={styles.progressContainer}>
+                 {/* Progress Bar */}
+                 <View style={styles.progressBarBackground}>
+                     <LinearGradient
+                         colors={isCompleted ? [colors.completedGreen, colors.completedGreen] : [colors.secondaryBlue, colors.primaryBlue, colors.lightBlue]}
+                         style={[styles.progressBarForeground, { width: `${progressPercent}%` }]}
+                         start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+                     />
+                 </View>
+                 {/* Progress Text */}
+                 <Text style={[styles.goalProgressText, isCompleted && styles.goalProgressTextCompleted]}>
+                    {isCompleted ? 'Completed!' : `${formatValue(goal.progress, goal.metric)} / ${formatValue(goal.target, goal.metric)}`}
+                 </Text>
+            </View>
+         </View>
+    );
+};
+
+// --- Reusable Goal Category Section Component ---
+interface GoalCategorySectionProps {
+    title: string;
+    iconName: string; // Ionicons name
+    goals: DisplayGoal[];
+}
+
+const GoalCategorySection = ({ title, iconName, goals }: GoalCategorySectionProps) => {
+    if (goals.length === 0) return null; // Don't render empty sections
+
+    return (
+        <View style={styles.sectionContainer}>
+            <View style={styles.sectionHeader}>
+                <Ionicons name={iconName} size={24} color={colors.textPrimary} style={styles.sectionIcon} />
+                <Text style={styles.sectionTitle}>{title}</Text>
+            </View>
+            {goals.map(goal => <GoalCard key={goal.goalId} goal={goal} />)}
+        </View>
+    );
+}
 
 const GoalsScreen = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
@@ -65,7 +142,15 @@ const GoalsScreen = () => {
               const goalsSnapshot = await getDocs(goalsCollectionRef);
               const definitions: { [key: string]: GoalDefinition } = {};
               goalsSnapshot.forEach((doc) => {
-                  definitions[doc.id] = { goalId: doc.id, ...doc.data() } as GoalDefinition;
+                  const data = doc.data();
+                  definitions[doc.id] = { 
+                      goalId: doc.id, 
+                      description: data.description, 
+                      type: data.type, 
+                      metric: data.metric,
+                      target: data.target, 
+                      xpReward: data.xpReward 
+                  } as GoalDefinition;
               });
               setAllGoalDefinitions(definitions);
           } catch (error) {
@@ -102,26 +187,34 @@ const GoalsScreen = () => {
       return () => unsubscribeProfile(); // Cleanup listener
   }, [currentUser]);
 
-  // Combine active progress with definitions for display
-  const displayGoals: DisplayGoal[] = Object.keys(activeGoalsMap)
-    .map(goalId => {
-      const definition = allGoalDefinitions[goalId];
-      const progressData = activeGoalsMap[goalId];
-      if (definition && progressData) {
-        return { ...definition, ...progressData };
-      }
-      return null; // Handle cases where definition might be missing
-    })
-    .filter((goal): goal is DisplayGoal => goal !== null) // Type guard to remove nulls
-    // Optional: Sort goals (e.g., incomplete first, then by type)
-    .sort((a, b) => {
-        if (a.completed !== b.completed) return a.completed ? 1 : -1; // Incomplete first
-        if (a.type !== b.type) { // Then sort by type (daily, weekly, lifetime)
-             const typeOrder = { daily: 1, weekly: 2, lifetime: 3 };
-             return (typeOrder[a.type] || 9) - (typeOrder[b.type] || 9);
-        }
-        return a.description.localeCompare(b.description); // Finally by description
-    });
+  // --- Process and Group Goals using useMemo ---
+  const { daily, weekly, lifetime } = useMemo(() => {
+      const allActiveGoals: DisplayGoal[] = Object.keys(activeGoalsMap)
+          .map(goalId => {
+              const definition = allGoalDefinitions[goalId];
+              const progressData = activeGoalsMap[goalId];
+              if (definition && progressData) {
+                  return { ...definition, ...progressData };
+              }
+              return null;
+          })
+          .filter((goal): goal is DisplayGoal => goal !== null)
+          // Sort incomplete first within each category later if needed
+          .sort((a, b) => (a.completed === b.completed) ? 0 : a.completed ? 1 : -1);
+          
+      // Group by type
+      const grouped = {
+          daily: [] as DisplayGoal[],
+          weekly: [] as DisplayGoal[],
+          lifetime: [] as DisplayGoal[],
+      };
+      allActiveGoals.forEach(goal => {
+          if (goal.type === 'daily') grouped.daily.push(goal);
+          else if (goal.type === 'weekly') grouped.weekly.push(goal);
+          else if (goal.type === 'lifetime') grouped.lifetime.push(goal);
+      });
+      return grouped;
+  }, [activeGoalsMap, allGoalDefinitions]);
 
   if (loading) {
       return (
@@ -131,37 +224,21 @@ const GoalsScreen = () => {
       );
   }
 
-  return (
-    <ScrollView style={styles.container}>
-      <Text style={styles.title}>Your Goals</Text>
+  const hasGoals = daily.length > 0 || weekly.length > 0 || lifetime.length > 0;
 
-      {displayGoals.length === 0 && !loading && (
+  return (
+    <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+      {/* <Text style={styles.screenTitle}>Your Goals</Text> */}
+
+      {!hasGoals && !loading && (
           <Text style={styles.noGoalsText}>No active goals found. Check back later!</Text>
       )}
 
-      {displayGoals.map((goal) => {
-          const progress = goal.target > 0 ? Math.min(goal.progress / goal.target, 1) : (goal.completed ? 1 : 0);
-          const progressPercent = Math.round(progress * 100);
-          return (
-              <View key={goal.goalId} style={[styles.goalCard, goal.completed && styles.goalCardCompleted]}>
-                  <Text style={styles.goalDescription}>{goal.description}</Text>
-                  <View style={styles.progressContainer}>
-                       {/* Progress Bar */}
-                       <View style={styles.progressBarBackground}>
-                           <LinearGradient
-                               colors={goal.completed ? [colors.completedGreen, colors.completedGreen] : [colors.secondaryBlue, colors.primaryBlue, colors.lightBlue]}
-                               style={[styles.progressBarForeground, { width: `${progressPercent}%` }]}
-                               start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-                           />
-                       </View>
-                       {/* Progress Text */}
-                       <Text style={[styles.goalProgressText, goal.completed && styles.goalProgressTextCompleted]}>
-                          {goal.completed ? 'Completed!' : `${goal.progress.toLocaleString()} / ${goal.target.toLocaleString()}`}
-                       </Text>
-                  </View>
-               </View>
-          );
-      })}
+      {/* Render sections using the correct variable names */}
+      <GoalCategorySection title="Daily Goals" iconName="sunny-outline" goals={daily} />
+      <GoalCategorySection title="Weekly Goals" iconName="calendar-outline" goals={weekly} />
+      <GoalCategorySection title="Lifetime Goals" iconName="trophy-outline" goals={lifetime} />
+
     </ScrollView>
   );
 };
@@ -170,8 +247,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
-    paddingHorizontal: 15, // Adjusted padding
+  },
+  contentContainer: {
+    paddingHorizontal: 15,
     paddingTop: 20,
+    paddingBottom: 40, // Add padding at bottom
   },
   loadingContainer: {
       flex: 1,
@@ -179,67 +259,104 @@ const styles = StyleSheet.create({
       alignItems: 'center',
       backgroundColor: colors.background,
   },
-  title: {
-    fontSize: 28, // Larger title
+  screenTitle: { // Renamed from title to avoid conflict
+    fontSize: 28,
     fontWeight: 'bold',
     color: colors.textPrimary,
     marginBottom: 25,
-    paddingHorizontal: 5, // Align with card padding
+    paddingHorizontal: 5,
+  },
+  sectionContainer: {
+    marginBottom: 30, // Space between sections
+  },
+  sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 15,
+      paddingHorizontal: 5,
+  },
+  sectionIcon: {
+    marginRight: 10,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.textPrimary,
   },
   noGoalsText: {
       textAlign: 'center',
       fontSize: 16,
       color: colors.textSecondary,
       marginTop: 50,
+      marginBottom: 30,
   },
+  // GoalCard Styles
   goalCard: {
     backgroundColor: colors.cardBackground,
-    padding: 20, // Increased padding
-    borderRadius: 15, // More rounded
-    marginBottom: 20, // Increased spacing
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 15,
     shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 5,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    elevation: 1,
   },
   goalCardCompleted: {
-     // Add subtle indication if needed, e.g., border color
-     // borderColor: colors.completedGreen,
-     // borderWidth: 1,
-     opacity: 0.8, // Slightly fade completed goals
+     opacity: 0.75, // Fade completed goals slightly
+  },
+  goalCardHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: 12,
   },
   goalDescription: {
-    fontSize: 17, // Slightly larger
+    flex: 1, // Allow text to wrap
+    fontSize: 16,
     fontWeight: '500',
     color: colors.textPrimary,
-    marginBottom: 15, // More space before progress
+    marginRight: 10,
+  },
+  xpContainer: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: '#fffbeb', // Light yellow background for XP
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 10,
+  },
+  xpText: {
+      fontSize: 12,
+      fontWeight: '600',
+      color: '#b45309', // Darker yellow/brown for text
+      marginLeft: 4,
   },
   progressContainer: {
      flexDirection: 'row',
      alignItems: 'center',
   },
   progressBarBackground: {
-      flex: 1, // Take available space
-      height: 10, // Thicker bar
-      backgroundColor: colors.background, 
-      borderRadius: 5,
+      flex: 1,
+      height: 8,
+      backgroundColor: colors.progressBg,
+      borderRadius: 4,
       overflow: 'hidden',
-      marginRight: 15, // Space between bar and text
+      marginRight: 12,
   },
   progressBarForeground: {
       height: '100%',
-      borderRadius: 5,
+      borderRadius: 4,
   },
   goalProgressText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
     color: colors.textSecondary,
-    minWidth: 90, // Ensure enough space for text
+    minWidth: 80, // Adjust as needed
     textAlign: 'right',
   },
   goalProgressTextCompleted: {
-     color: colors.completedGreen, // Green text when completed
+     color: colors.completedGreen,
   },
 });
 

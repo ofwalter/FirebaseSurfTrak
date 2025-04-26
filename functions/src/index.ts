@@ -248,27 +248,40 @@ export const processSessionForGoals = onDocumentCreated(
             }
           }
 
+          // Update the newRankLevel if it has increased
           if (potentialNewRank > userProfile.rankLevel) {
             newRankLevel = potentialNewRank;
-            logger.log(`User ${userId} ranked up to Level ${newRankLevel}!`);
+            logger.log(
+                `User ${userId}: Rank Up! Level ` +
+                `${userProfile.rankLevel} -> ${newRankLevel}`
+            );
+            // Optionally: Add logic here to grant rank-up rewards or send notifications
           }
-
-          // 6. Update User Profile (XP gain)
-          transaction.update(userRef, {
-            xp: FieldValue.increment(xpGainedThisSession),
-            rankLevel: newRankLevel,
-            activeGoals: updatedActiveGoals,
-          });
-        } else if (
-          JSON.stringify(updatedActiveGoals) !==
-                    JSON.stringify(userProfile.activeGoals)
-        ) {
-          // Update activeGoals only if they changed but no XP was gained
-          transaction.update(userRef, {
-            activeGoals: updatedActiveGoals,
-          });
         }
-      }); // End transaction
+
+        // 6. Update User Profile in Transaction
+        // Prepare the update object, only including fields that changed
+        const updateData: { [key: string]: any } = {};
+        if (xpGainedThisSession > 0) {
+            // Use FieldValue.increment for safe concurrent updates
+            updateData.xp = FieldValue.increment(xpGainedThisSession);
+        }
+        if (newRankLevel !== userProfile.rankLevel) {
+            updateData.rankLevel = newRankLevel;
+        }
+        // Check if activeGoals actually changed before including it
+        if (JSON.stringify(updatedActiveGoals) !== JSON.stringify(userProfile.activeGoals)) {
+            updateData.activeGoals = updatedActiveGoals;
+        }
+
+        // Only run the update if there's something to change
+        if (Object.keys(updateData).length > 0) {
+            transaction.update(userRef, updateData);
+            logger.log(`User ${userId}: Profile updated`, updateData);
+        } else {
+             logger.log(`User ${userId}: No profile updates needed for this session.`);
+        }
+      });
 
       logger.log(
         `Successfully processed session ${sessionId} for user ${userId}.`

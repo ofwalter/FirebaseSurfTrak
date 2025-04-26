@@ -16,6 +16,9 @@ import { doc, getDoc, onSnapshot, Timestamp } from 'firebase/firestore'; // Impo
 import { BlurView } from 'expo-blur';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { AppStackParamList } from '../navigation/AppNavigator'; // Import AppStackParamList
 
 // Define colors (reuse or centralize later)
 const colors = {
@@ -39,14 +42,22 @@ const colors = {
 
 // --- Reusable Components (Inline for simplicity) ---
 
-const ProfileHeader = () => (
+// Update ProfileHeader to accept navigation
+interface ProfileHeaderProps {
+    navigation: NativeStackNavigationProp<AppStackParamList, 'AppTabs'>; // Specific type
+}
+
+const ProfileHeader = ({ navigation }: ProfileHeaderProps) => (
   <BlurView intensity={80} tint="light" style={styles.headerContainer}>
     <View style={styles.headerContent}>
       {/* Title */}
       <Text style={styles.headerTitle}>Profile</Text>
 
       {/* Settings Button (can link to settings menu item later) */}
-      <TouchableOpacity style={styles.settingsButton}>
+      <TouchableOpacity 
+        style={styles.settingsButton}
+        onPress={() => navigation.navigate('Settings')} // Navigate on press
+      >
         <Ionicons name="settings-outline" size={24} color={colors.primaryBlue} />
       </TouchableOpacity>
     </View>
@@ -69,6 +80,7 @@ interface UserProfileData { // Define base user profile structure
     activeGoals: { [key: string]: { progress: number; completed: boolean; lastReset?: Timestamp } };
     // Add optional fields fetched later
     currentRankName?: string;
+    currentRankThreshold?: number;
     nextRankThreshold?: number;
     sessionsCount?: number; // Add placeholder stats fields
     totalWavesCount?: number;
@@ -85,11 +97,23 @@ const ProfileCard = ({ userProfile }: ProfileCardProps) => {
         return null; // Or a placeholder/loading state
     }
 
-    const { name, email, xp = 0, currentRankName = "Rookie", nextRankThreshold = 100 } = userProfile;
+    const { 
+        name, 
+        email, 
+        xp = 0, 
+        currentRankName = "Rookie", 
+        currentRankThreshold = 0,
+        nextRankThreshold = 100 
+    } = userProfile;
 
-    // Calculate progress
-    const progress = nextRankThreshold > 0 ? Math.min(xp / nextRankThreshold, 1) : 1;
-    const progressPercent = Math.round(progress * 100);
+    // Correct progress calculation (mirroring HomeScreen RankCard)
+    const xpInCurrentRank = Math.max(0, xp - currentRankThreshold);
+    const xpRangeForRank = Math.max(1, nextRankThreshold - currentRankThreshold); // Avoid division by zero
+    const isMaxRank = xp === nextRankThreshold; // Check if user might be at max rank (where next = current)
+
+    const progress = isMaxRank ? 1 : Math.min(xpInCurrentRank / xpRangeForRank, 1);
+    const progressPercent = isMaxRank ? 100 : Math.round(progress * 100);
+    const xpNeeded = isMaxRank ? 0 : Math.max(0, nextRankThreshold - xp);
 
     return (
         <View style={styles.profileCardContainer}>
@@ -98,10 +122,9 @@ const ProfileCard = ({ userProfile }: ProfileCardProps) => {
                 style={styles.profilePicture}
             />
             <Text style={styles.profileName}>{name || email || 'SurfTrak User'}</Text>
-            {/* Display Rank */}
             <Text style={styles.profileRank}>{currentRankName}</Text>
 
-            {/* XP Progress Bar */}
+            {/* XP Progress Bar - Use correct width */}
             <View style={styles.xpBarContainer}>
                  <LinearGradient
                      colors={[colors.secondaryBlue, colors.primaryBlue, colors.lightBlue]}
@@ -111,7 +134,12 @@ const ProfileCard = ({ userProfile }: ProfileCardProps) => {
              </View>
             <View style={styles.xpTextContainer}>
                  <Text style={styles.xpText}>{xp.toLocaleString()} XP</Text>
-                 <Text style={styles.xpNextText}>{nextRankThreshold.toLocaleString()} XP to next rank</Text>
+                 {/* Show correct XP needed text or Max Rank */}
+                 {isMaxRank ? (
+                    <Text style={styles.xpNextText}>(Max Rank Achieved)</Text>
+                 ) : (
+                    <Text style={styles.xpNextText}>({xpNeeded.toLocaleString()} XP to next rank)</Text>
+                 )}
              </View>
         </View>
     );
@@ -147,7 +175,11 @@ const MenuCard = ({ iconName, iconColor, iconBackgroundColor, text, gradientColo
 
 // --- ProfileScreen Implementation ---
 
+// Define navigation prop type for the screen itself
+type ProfileScreenNavigationProp = NativeStackNavigationProp<AppStackParamList, 'AppTabs'>;
+
 const ProfileScreen = () => {
+  const navigation = useNavigation<ProfileScreenNavigationProp>(); // Get navigation object
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
@@ -184,7 +216,6 @@ const ProfileScreen = () => {
          const currentRankLevel = profileData.rankLevel ?? 1;
          const currentXp = profileData.xp ?? 0;
 
-         // Fetch current and next rank definitions
          const currentRankRef = doc(db, 'ranks', String(currentRankLevel));
          const nextRankRef = doc(db, 'ranks', String(currentRankLevel + 1));
 
@@ -194,8 +225,18 @@ const ProfileScreen = () => {
                  getDoc(nextRankRef),
              ]);
 
-             const rankName = currentRankSnap.exists() ? (currentRankSnap.data() as RankData).name : 'Rookie';
-             const nextRankThreshold = nextRankSnap.exists() ? (nextRankSnap.data() as RankData).xpThreshold : currentXp; // Use current XP if no next rank
+             let rankName = 'Rookie';
+             let currentThreshold = 0;
+             let nextThreshold = currentXp;
+
+             if (currentRankSnap.exists()) {
+                 const currentRankData = currentRankSnap.data() as RankData;
+                 rankName = currentRankData.name;
+                 currentThreshold = currentRankData.xpThreshold;
+             }
+             if (nextRankSnap.exists()) {
+                 nextThreshold = (nextRankSnap.data() as RankData).xpThreshold;
+             } // else nextThreshold remains currentXp (max rank case)
 
              // Combine fetched data
              setUserProfile({
@@ -206,11 +247,10 @@ const ProfileScreen = () => {
                  rankLevel: currentRankLevel,
                  activeGoals: profileData.activeGoals ?? {},
                  currentRankName: rankName,
-                 nextRankThreshold: nextRankThreshold,
-                 // NOTE: sessionsCount & totalWavesCount aren't directly in user profile
-                 // These might need separate fetching or come from lifetime stats if available
-                 sessionsCount: 0, // Placeholder - Fetch or calculate elsewhere
-                 totalWavesCount: 0, // Placeholder - Fetch or calculate elsewhere
+                 currentRankThreshold: currentThreshold,
+                 nextRankThreshold: nextThreshold,
+                 sessionsCount: 0, 
+                 totalWavesCount: 0, 
              });
          } catch (error) {
               console.error("Error fetching rank data: ", error);
@@ -222,13 +262,13 @@ const ProfileScreen = () => {
                     xp: currentXp,
                     rankLevel: currentRankLevel,
                     activeGoals: profileData.activeGoals ?? {},
-                    currentRankName: 'Rookie', // Default rank name on error
+                    currentRankName: 'Rookie', 
+                    currentRankThreshold: 0, // Default threshold on error
                     nextRankThreshold: currentXp,
                     sessionsCount: 0,
                     totalWavesCount: 0,
               });
          }
-
        } else {
          console.log("User profile document does not exist for UID:", currentUser.uid);
          setUserProfile(null); // Handle case where profile doesn't exist
@@ -268,8 +308,8 @@ const ProfileScreen = () => {
     );
   };
 
-  // Placeholder actions for other menu items
-  const handleSettings = () => Alert.alert("Settings", "Settings not implemented yet.");
+  // Update handleSettings to navigate
+  const handleSettings = () => navigation.navigate('Settings');
   const handleDeviceManager = () => Alert.alert("Device Manager", "Device Manager not implemented yet.");
   const handleHelp = () => Alert.alert("Help & Support", "Help & Support not implemented yet.");
 
@@ -284,7 +324,8 @@ const ProfileScreen = () => {
 
   return (
     <View style={styles.screenContainer}>
-      <ProfileHeader />
+      {/* Pass navigation prop to ProfileHeader */}
+      <ProfileHeader navigation={navigation} />
       <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContentContainer}>
         {/* Pass fetched userProfile data to ProfileCard */}
         <ProfileCard userProfile={userProfile} />
@@ -296,8 +337,8 @@ const ProfileScreen = () => {
                 iconColor={colors.primaryBlue}
                 iconBackgroundColor={colors.iconBackgroundBlue}
                 text="Settings"
-                gradientColors={['#ffffff', '#f9fafb']} // Subtle white gradient
-                onPress={handleSettings}
+                gradientColors={[colors.white, colors.white]} // Simple white card
+                onPress={handleSettings} // Use updated handler
             />
             <MenuCard
                 iconName="watch-outline" // Example icon for device manager
@@ -320,7 +361,7 @@ const ProfileScreen = () => {
                 iconColor={colors.red}
                 iconBackgroundColor={colors.iconBackgroundRed}
                 text="Log Out"
-                gradientColors={['#ffffff', '#f9fafb']}
+                gradientColors={[colors.white, colors.white]} // Simple white card
                 onPress={handleLogout}
             />
         </View>
