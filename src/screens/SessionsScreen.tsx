@@ -20,36 +20,7 @@ import { AppStackParamList } from '../navigation/AppNavigator';
 import { BlurView } from 'expo-blur';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import SessionCard from '../components/SessionCard';
-
-// Interfaces (can be moved to types file)
-interface GeoPoint {
-    latitude: number;
-    longitude: number;
-}
-
-interface Wave {
-  id?: string;
-  startTime: Timestamp;
-  endTime: Timestamp;
-  duration: number;
-  topSpeed: number;
-  averageSpeed: number;
-  coordinates: GeoPoint[]; // Added coordinates array
-}
-
-// Define Session interface locally (ensure ID is required)
-interface Session {
-  id: string; 
-  userId: string;
-  location: string;
-  sessionDate: Timestamp;
-  waveCount: number;
-  duration: number;
-  longestWave?: number;
-  maxSpeed?: number;
-  startLatitude: number;
-  startLongitude: number;
-}
+import { Session, Wave, GeoPoint } from '../types'; // Import shared types
 
 // Define SortCriteria type outside the component
 type SortCriteria = 'latest' | 'oldest' | 'spot_az' | 'most_waves';
@@ -123,6 +94,41 @@ const surfSpots = [
   { name: "Waikiki Beach", latitude: 21.2750, longitude: -157.8300 },
 ];
 // -----------------------------
+
+// Define calculateSpeedMph locally or move to utils
+const calculateSpeedMph = (distanceKm: number, timeDiffSeconds: number): number => {
+  if (timeDiffSeconds <= 0) return 0;
+  const distanceMiles = distanceKm * 0.621371;
+  const timeHours = timeDiffSeconds / 3600;
+  return distanceMiles / timeHours;
+};
+
+// --- Helper Functions Needed Here ---
+
+// Degrees to Radians
+function deg2rad(deg: number): number {
+  return deg * (Math.PI / 180);
+}
+
+// Calculate distance between two lat/lon points in kilometers
+// (Copied from SessionDetailScreen - consider moving to a shared utils file later)
+function getDistanceFromLatLonInKm(
+    lat1: number, lon1: number,
+    lat2: number, lon2: number
+): number {
+  const R = 6371; // Radius of the earth in km
+  const dLat = deg2rad(lat2 - lat1);
+  const dLon = deg2rad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const d = R * c; // Distance in km
+  return d;
+}
+
+// --- End Helper Functions ---
 
 // --- SessionsScreen Implementation ---
 
@@ -205,25 +211,24 @@ const SessionsScreen = () => {
     }
     setAdding(true);
 
-    // --- Select Random Surf Spot --- 
     const randomSpotIndex = Math.floor(Math.random() * surfSpots.length);
     const selectedSpot = surfSpots[randomSpotIndex];
-    const baseLatitude = selectedSpot.latitude + (Math.random() - 0.5) * 0.002; // Add slight variation
+    const baseLatitude = selectedSpot.latitude + (Math.random() - 0.5) * 0.002;
     const baseLongitude = selectedSpot.longitude + (Math.random() - 0.5) * 0.002;
     const locationName = selectedSpot.name;
-    // -------------------------------
 
     try {
-        const sessionDate = Timestamp.now();
-        const waveCount = Math.floor(Math.random() * 5) + 2;
-        let calculatedTotalDuration = 0;
-        let calculatedMaxDuration = 0;
-        let calculatedMaxSpeed = 0;
+        const sessionTimestamp = Timestamp.now();
+        const waveCount = Math.floor(Math.random() * 5) + 2; // 2 to 6 waves
+        let totalSessionDurationSeconds = 0;
+        let sessionLongestWaveDuration = 0;
+        let sessionMaxSpeed = 0;
 
+        // Prepare session data (without aggregates initially)
         const newSessionData: Omit<Session, 'id' | 'duration' | 'longestWave' | 'maxSpeed'> = {
             userId: currentUser.uid,
             location: locationName,
-            sessionDate: sessionDate,
+            sessionDate: sessionTimestamp,
             waveCount: waveCount,
             startLatitude: baseLatitude,
             startLongitude: baseLongitude,
@@ -233,22 +238,21 @@ const SessionsScreen = () => {
         const batch = writeBatch(db);
         const wavesSubCollectionRef = collection(db, "sessions", sessionRef.id, "waves");
 
+        // Generate Waves with detailed coordinates
         for (let i = 0; i < waveCount; i++) {
-            const waveDuration = Math.floor(Math.random() * 15) + 5;
-            const waveTopSpeed = Math.random() * 20 + 10;
-            const startTime = Timestamp.fromMillis(sessionDate.toMillis() + i * 60000 + Math.random() * 5000);
-            const endTime = Timestamp.fromMillis(startTime.toMillis() + waveDuration * 1000);
-            
-            calculatedTotalDuration += waveDuration;
-            if (waveDuration > calculatedMaxDuration) {
-                calculatedMaxDuration = waveDuration;
-            }
-            if (waveTopSpeed > calculatedMaxSpeed) {
-                calculatedMaxSpeed = waveTopSpeed;
+            // Realistic wave duration (e.g., 5 to 20 seconds)
+            const waveDurationSeconds = Math.floor(Math.random() * 16) + 5;
+            totalSessionDurationSeconds += waveDurationSeconds; // Add to session total
+            if (waveDurationSeconds > sessionLongestWaveDuration) {
+                sessionLongestWaveDuration = waveDurationSeconds;
             }
 
-            const waveCoordinates: GeoPoint[] = [];
-            const pointsCount = waveDuration * 2;
+            // Simulate wave path parameters
+            const pointsCount = Math.max(2, Math.ceil(waveDurationSeconds * 2)); // Approx 0.5s interval
+            const timeIntervalSeconds = waveDurationSeconds / (pointsCount - 1);
+            const waveStartTime = Timestamp.fromMillis(sessionTimestamp.toMillis() + i * 60000 + Math.random() * 5000); // Stagger waves
+            const waveEndTime = Timestamp.fromMillis(waveStartTime.toMillis() + waveDurationSeconds * 1000);
+
             const startLatOffset = (Math.random() - 0.5) * 0.001;
             const startLonOffset = (Math.random() - 0.5) * 0.001;
             const waveStartLat = baseLatitude + 0.0015 + startLatOffset;
@@ -256,35 +260,77 @@ const SessionsScreen = () => {
             const waveEndLat = baseLatitude - 0.0003 + (Math.random() - 0.5) * 0.0003;
             const waveEndLon = baseLongitude + (Math.random() - 0.5) * 0.0003;
 
+            let waveMaxSpeed = 0;
+            let waveTotalSpeedSum = 0;
+            let speedPointsCount = 0;
+            const waveCoordinates: GeoPoint[] = [];
+
+            // Generate individual points with timestamps and speeds
             for (let p = 0; p < pointsCount; p++) {
                 const progress = p / (pointsCount - 1);
+                const currentTimestamp = Timestamp.fromMillis(waveStartTime.toMillis() + p * timeIntervalSeconds * 1000);
+
+                // Simulate position with slight randomness
                 const lat = waveStartLat + (waveEndLat - waveStartLat) * progress + (Math.random() - 0.5) * 0.00005;
                 const lon = waveStartLon + (waveEndLon - waveStartLon) * progress + (Math.random() - 0.5) * 0.00005;
-                waveCoordinates.push({ latitude: lat, longitude: lon });
+
+                let speedMph = 0;
+                if (p > 0) {
+                    // Calculate speed based on previous point
+                    const prevPoint = waveCoordinates[p - 1];
+                    const distKm = getDistanceFromLatLonInKm(prevPoint.latitude, prevPoint.longitude, lat, lon);
+                    // Use actual time interval for speed calc
+                    const timeDiff = currentTimestamp.seconds - prevPoint.timestamp.seconds + (currentTimestamp.nanoseconds - prevPoint.timestamp.nanoseconds) / 1e9;
+                    speedMph = calculateSpeedMph(distKm, timeDiff);
+
+                    // Simulate speed variation (e.g., faster in the middle)
+                    const speedFactor = 1 + Math.sin(progress * Math.PI) * 0.5; // Faster middle
+                    speedMph *= speedFactor;
+                    speedMph = Math.max(0, Math.min(speedMph, 30)); // Clamp speed (0-30 mph)
+
+                    waveTotalSpeedSum += speedMph;
+                    speedPointsCount++;
+                    if (speedMph > waveMaxSpeed) waveMaxSpeed = speedMph;
+                    if (speedMph > sessionMaxSpeed) sessionMaxSpeed = speedMph;
+                }
+
+                waveCoordinates.push({ 
+                    latitude: lat, 
+                    longitude: lon, 
+                    timestamp: currentTimestamp, 
+                    speed: speedMph // Store calculated speed
+                });
             }
 
+            const waveAverageSpeed = speedPointsCount > 0 ? waveTotalSpeedSum / speedPointsCount : 0;
+
+            // Create wave data with calculated aggregates
             const newWaveData: Omit<Wave, 'id'> = {
-                startTime: startTime,
-                endTime: endTime,
-                duration: waveDuration,
-                topSpeed: waveTopSpeed,
-                averageSpeed: Math.random() * 10 + 5,
-                coordinates: waveCoordinates,
+                startTime: waveStartTime,
+                endTime: waveEndTime,
+                duration: waveDurationSeconds,
+                topSpeed: waveMaxSpeed, // Use calculated max speed for the wave
+                averageSpeed: waveAverageSpeed, // Use calculated average speed
+                coordinates: waveCoordinates, // Include detailed coords
             };
+
+            // Add wave document to batch
             const waveDocRef = doc(wavesSubCollectionRef);
             batch.set(waveDocRef, newWaveData);
         }
-        
+
+        // Update session document with calculated aggregates
         batch.update(sessionRef, { 
-            duration: calculatedTotalDuration,
-            longestWave: calculatedMaxDuration,
-            maxSpeed: calculatedMaxSpeed
+            duration: totalSessionDurationSeconds, // Total duration of all waves
+            longestWave: sessionLongestWaveDuration,
+            maxSpeed: sessionMaxSpeed // Overall max speed from all waves
         });
-        
+
+        // Commit the batch
         await batch.commit();
 
         Alert.alert("Success", `Fake session at ${locationName} added!`);
-        fetchSessions();
+        fetchSessions(); // Refresh the list
     } catch (error) {
         console.error("Error adding fake session: ", error);
         Alert.alert("Error", "Could not add fake session.");

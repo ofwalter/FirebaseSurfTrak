@@ -17,37 +17,7 @@ import MapView, { Polyline, Marker } from 'react-native-maps';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Modalize } from 'react-native-modalize';
-
-// Interfaces & Types
-interface GeoPoint {
-    latitude: number;
-    longitude: number;
-}
-
-interface Wave {
-  id?: string;
-  startTime: Timestamp;
-  endTime: Timestamp;
-  duration: number;
-  topSpeed: number;
-  averageSpeed: number;
-  coordinates?: GeoPoint[]; // Coordinates are optional now
-}
-
-interface Session {
-    // Define fields needed from the session doc
-    startLatitude: number;
-    startLongitude: number;
-    // Add others if needed, e.g., location name for title
-}
-
-type SessionDetailRouteParams = {
-  SessionDetail: {
-    sessionId: string;
-    sessionLocation: string;
-  };
-};
-type SessionDetailScreenRouteProp = RouteProp<SessionDetailRouteParams, 'SessionDetail'>;
+import { Session, Wave, GeoPoint } from '../types'; // Import shared types
 
 // Define colors (reuse or centralize later)
 const colors = {
@@ -87,6 +57,14 @@ const WAVE_SELECTOR_HEIGHT = 60; // Example height
 const PRIMARY_METRICS_HEIGHT = 80; // Example height
 const BOTTOM_SHEET_PEEK_HEIGHT = 80; // How much space Modalize might take when closed
 
+// Type for Navigation Params - KEEP THESE
+type SessionDetailRouteParams = {
+  SessionDetail: {
+    sessionId: string;
+  };
+};
+type SessionDetailScreenRouteProp = RouteProp<SessionDetailRouteParams, 'SessionDetail'>;
+
 // --- Helper Functions ---
 
 // Degrees to Radians
@@ -125,24 +103,6 @@ function calculatePathDistance(coordinates: GeoPoint[] | undefined): number {
     }
     return totalDistanceKm * 1000; // Return distance in meters
 }
-
-// Simple Path Smoothing Function
-const smoothPath = (path: GeoPoint[], windowSize: number = 3): GeoPoint[] => {
-  if (!path || path.length < windowSize) return path;
-  const smoothed: GeoPoint[] = [path[0]];
-  const halfWindow = Math.floor(windowSize / 2);
-  for (let i = 1; i < path.length - 1; i++) {
-    const start = Math.max(0, i - halfWindow);
-    const end = Math.min(path.length - 1, i + halfWindow);
-    let sumLat = 0, sumLon = 0, count = 0;
-    for (let j = start; j <= end; j++) {
-      sumLat += path[j].latitude; sumLon += path[j].longitude; count++;
-    }
-    smoothed.push(count > 0 ? { latitude: sumLat / count, longitude: sumLon / count } : path[i]);
-  }
-  smoothed.push(path[path.length - 1]);
-  return smoothed;
-};
 
 // Helper component for displaying a single stat row
 interface StatRowProps {
@@ -191,6 +151,14 @@ const SessionDetailScreen = () => {
   const [selectedWaveIndex, setSelectedWaveIndex] = useState(-1);
   const [mapDetailReady, setMapDetailReady] = useState(false);
 
+  // --- Define Edge Padding Constants Here --- 
+  // Padding for SUMMARY view (index = -1)
+  const SUMMARY_EDGE_PADDING = { top: 80, right: 60, bottom: screenHeight * 0.30, left: 60 }; // Use the current value
+
+  // Padding for INDIVIDUAL WAVE view (index >= 0)
+  const WAVE_EDGE_PADDING = { top: 60, right: 50, bottom: screenHeight * 0.30, left: 50 }; // Use the current value
+  // ----------------------------------------
+
   // Fetch Session and Waves Effect
   useEffect(() => {
     const fetchSessionAndWaves = async () => {
@@ -235,16 +203,21 @@ const SessionDetailScreen = () => {
 
   // Map Initialization Effect
   useEffect(() => {
-    if (sessionData && waves.length > 0 && mapRef.current) {
-      mapRef.current.fitToCoordinates(waves.flatMap(wave => wave.coordinates || []), {
-        edgePadding: { top: 80, right: 60, bottom: 80, left: 60 },
-        animated: true,
-      });
+    if (sessionData && waves.length > 0 && mapRef.current && !loading) {
+        const allCoordsFlat = waves.flatMap(wave => wave.coordinates || []);
+        if (allCoordsFlat.length > 0) {
+            setTimeout(() => {
+                 mapRef.current?.fitToCoordinates(allCoordsFlat, {
+                    edgePadding: SUMMARY_EDGE_PADDING, 
+                    animated: false, 
+                 });
+            }, 100); 
+        }
       setMapDetailReady(true);
     }
-  }, [sessionData, waves, mapRef]);
+  }, [sessionData, waves, mapRef, loading]);
 
-  // Memoized Values for Map
+  // Memoized Values for Map - Recalculate selectedWave here too for clarity
   const { selectedWave, allWaveCoordinates, sessionRegion } = useMemo(() => {
     if (!sessionData) { // Base check on sessionData only for region
         return {
@@ -261,25 +234,23 @@ const SessionDetailScreen = () => {
       longitudeDelta: 0.02,
     };
 
-    // Determine selected wave
-    const selectedWave = selectedWaveIndex >= 0 && waves.length > selectedWaveIndex
+    // Determine selected wave directly within this memo
+    const currentSelectedWave = selectedWaveIndex >= 0 && waves.length > selectedWaveIndex
         ? waves[selectedWaveIndex]
         : null;
 
-    // Get coordinates for *all* waves for background display
     const allCoords = waves
         .map(w => w.coordinates)
-        .filter((coords): coords is GeoPoint[] => !!coords && coords.length > 1); // Filter out waves with insufficient coords
+        .filter((coords): coords is GeoPoint[] => !!coords && coords.length > 1);
 
     return { 
-        selectedWave, 
-        allWaveCoordinates: allCoords, // Return coords for ALL waves
+        selectedWave: currentSelectedWave, // Use the calculated one
+        allWaveCoordinates: allCoords, 
         sessionRegion: actualSessionRegion 
     };
   }, [sessionData, waves, selectedWaveIndex]);
 
   // Filter displayable waves (needed for summary stats)
-  // Moved filtering before summaryStats calculation
   const displayableWaves = useMemo(() => 
       waves.filter(w => w.coordinates && w.coordinates.length > 0), 
       [waves]
@@ -348,58 +319,87 @@ const SessionDetailScreen = () => {
 
     setSelectedWaveIndex(index);
 
-    // Map animation logic (keep existing)
+    if (!mapRef.current) return; // Ensure map is ready
+
     if (index === -1) {
-        // Fit map to all waves when 'All' is selected
         const allCoordsFlat = waves.flatMap(w => w.coordinates || []);
-        if (allCoordsFlat.length > 1 && mapRef.current) {
-            const region = calculateRegion(allCoordsFlat);
-            if (region) {
-                 mapRef.current.animateToRegion(region, 500);
-            } else {
-                 mapRef.current.animateToRegion(sessionRegion, 500);
-            }
-        } else if (mapRef.current) {
-            mapRef.current.animateToRegion(sessionRegion, 500);
+        if (allCoordsFlat.length > 0) {
+             mapRef.current.fitToCoordinates(allCoordsFlat, {
+                 edgePadding: SUMMARY_EDGE_PADDING, // Use constant
+                 animated: true,
+             });
+        } else {
+             mapRef.current.animateToRegion(sessionRegion, 500);
         }
     } else if (index >= 0 && waves[index]?.coordinates) {
-        // Focus on specific wave
         const coords = waves[index].coordinates!;
-        if (coords.length > 1) {
-             const region = calculateRegion(coords);
-             if (region && mapRef.current) { 
-                 mapRef.current.animateToRegion(region, 500);
-             }
+        if (coords.length > 0) {
+             mapRef.current.fitToCoordinates(coords, {
+                 edgePadding: WAVE_EDGE_PADDING, // Use constant
+                 animated: true,
+             });
         }
     }
-    // Open/Update Modal - Let Modalize handle its own content update based on selectedWaveIndex state
-    // modalizeRef.current?.open(); // Consider opening only on specific interaction? Or keep it open?
   };
 
-  // --- Region Calculation Helper (Defined before potential early returns) ---
-  const calculateRegion = (coords: GeoPoint[], padding = 0.01) => {
-    if (!coords || coords.length < 2) return undefined;
+  // --- Heatmap Helper Functions ---
 
-    let minLat = coords[0].latitude, maxLat = coords[0].latitude;
-    let minLon = coords[0].longitude, maxLon = coords[0].longitude;
-
-    coords.forEach(point => {
-      if (point.latitude < minLat) minLat = point.latitude;
-      if (point.latitude > maxLat) maxLat = point.latitude;
-      if (point.longitude < minLon) minLon = point.longitude;
-      if (point.longitude > maxLon) maxLon = point.longitude;
-    });
-
-    const deltaLat = (maxLat - minLat) * padding;
-    const deltaLon = (maxLon - minLon) * padding;
-
-    return {
-      latitude: (minLat + maxLat) / 2,
-      longitude: (minLon + maxLon) / 2,
-      latitudeDelta: deltaLat,
-      longitudeDelta: deltaLon,
-    };
+  // Calculate speed between two points given distance (km) and time diff (seconds)
+  const calculateSpeedMph = (distanceKm: number, timeDiffSeconds: number): number => {
+    if (timeDiffSeconds <= 0) return 0;
+    const distanceMiles = distanceKm * 0.621371;
+    const timeHours = timeDiffSeconds / 3600;
+    return distanceMiles / timeHours;
   };
+
+  // Define the color scale for speed heatmap
+  const getSpeedColor = (speedMph: number): string => {
+      if (speedMph < 5) return '#5e8cff'; // Blueish (Slow)
+      if (speedMph < 12) return '#5eff8c'; // Greenish (Medium)
+      if (speedMph < 18) return '#fffa5e'; // Yellowish (Fast)
+      return '#ff5e5e'; // Reddish (Very Fast)
+      // Adjust ranges and colors as needed
+  };
+
+  // Generate heatmap segments for a selected wave
+  const generateHeatmapSegments = (wave: Wave | null): { points: GeoPoint[], color: string }[] => {
+    if (!wave || !wave.coordinates || wave.coordinates.length < 2) {
+        return [];
+    }
+    const segments: { points: GeoPoint[], color: string }[] = [];
+    for (let i = 0; i < wave.coordinates.length - 1; i++) {
+        const p1 = wave.coordinates[i];
+        const p2 = wave.coordinates[i+1];
+        
+        // Get speeds, default to 0 if undefined
+        const speed1 = p1.speed ?? 0;
+        const speed2 = p2.speed ?? 0;
+        
+        let segmentAvgSpeed: number;
+
+        if (p1.speed !== undefined && p1.speed !== null) {
+             // If p1 has speed, average it with p2 (or use p1 if p2 is missing)
+             segmentAvgSpeed = (speed1 + (speed2 ?? speed1)) / 2;
+        } else {
+            // If p1 speed is missing, estimate using distance/time
+            const distKm = getDistanceFromLatLonInKm(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
+            const timeDiff = p2.timestamp.seconds - p1.timestamp.seconds + (p2.timestamp.nanoseconds - p1.timestamp.nanoseconds) / 1e9;
+            segmentAvgSpeed = calculateSpeedMph(distKm, timeDiff);
+        }
+        
+        const color = getSpeedColor(segmentAvgSpeed);
+        segments.push({ points: [p1, p2], color });
+    }
+    return segments;
+  };
+
+  // Memoize heatmap generation
+  const heatmapSegments = useMemo(() => {
+    if (!selectedWave) {
+      return [];
+    }
+    return generateHeatmapSegments(selectedWave);
+  }, [selectedWave]);
 
   // --- Render Logic ---
   // Early returns are now AFTER all hooks
@@ -431,36 +431,34 @@ const SessionDetailScreen = () => {
                 // scrollEnabled={false} 
                 // zoomEnabled={false}
             >
-                {/* Render ALL wave paths (dimly) */}
-                {allWaveCoordinates.map((waveCoords, waveIdx) => (
-                    // Only render if coordinates exist
-                    // Apply dim style if a specific wave is selected AND it's not this one
+                {/* Render ALL non-selected wave paths (dimly) */}
+                {waves.map((wave, waveIdx) => {
+                    // Use optional chaining and check length
+                    if (waveIdx === selectedWaveIndex || !wave.coordinates || wave.coordinates.length < 2) {
+                        return null;
+                    }
+                    // Render non-selected waves using original coordinates (no smoothing here)
+                    return (
+                        <Polyline
+                            key={`wave-path-${waveIdx}`}
+                            coordinates={wave.coordinates} // Use original coordinates
+                            strokeColor={colors.primaryBlueRGBA} 
+                            strokeWidth={3} 
+                            zIndex={0} 
+                        />
+                    );
+                })}
+    
+                {/* Render selected wave as HEATMAP */}
+                {heatmapSegments.map((segment, index) => (
                     <Polyline
-                        key={`wave-path-${waveIdx}`}
-                        coordinates={waveCoords}
-                        strokeColor={
-                            selectedWaveIndex !== -1 && selectedWaveIndex !== waveIdx 
-                                ? colors.primaryBlueRGBA // Dim if another wave selected
-                                : colors.primaryBlue // Normal color if 'All' is selected (overridden below if needed)
-                        }
-                        strokeWidth={
-                            selectedWaveIndex !== -1 && selectedWaveIndex !== waveIdx 
-                                ? 3 // Thinner if another wave selected
-                                : 4 // Slightly thicker for 'All' view (overridden below if needed)
-                        }
+                        key={`heatmap-segment-${selectedWaveIndex}-${index}`}
+                        coordinates={segment.points} // Use the 2 points for the segment
+                        strokeColor={segment.color}
+                        strokeWidth={5} 
+                        zIndex={1} 
                     />
                 ))}
-    
-                {/* Render selected wave path (prominently on top) */}
-                {selectedWave?.coordinates && selectedWave.coordinates.length > 1 && (
-                <Polyline
-                        key={`selected-wave-path-${selectedWaveIndex}`}
-                        coordinates={selectedWave.coordinates}
-                        strokeColor={colors.pathAqua} // Bright highlight color
-                        strokeWidth={5} // Thickest line
-                        zIndex={1} // Ensure it's on top
-                    />
-                )}
                 {/* Markers for start/end of selected wave */}
                 {selectedWave?.coordinates && selectedWave.coordinates.length > 0 && (
              <>
@@ -581,7 +579,7 @@ const SessionDetailScreen = () => {
                     ) : (
                         <Text style={styles.noStatsText}>No wave data to summarize.</Text>
                     )
-                 ) : (
+                 ) :
                     // Individual Wave View
                      selectedWave ? (
                          <View>
@@ -595,7 +593,7 @@ const SessionDetailScreen = () => {
                      ) : (
                          <Text style={styles.noStatsText}>Wave data not available.</Text>
                      )
-                 )}
+                 }
             </ScrollView>
         </Modalize>
     </GestureHandlerRootView>
