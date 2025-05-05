@@ -37,6 +37,11 @@ const colors = {
   primaryBlueRGBA: 'rgba(26, 115, 232, 0.7)',
   secondaryBlue: '#0056B3',
   lightBlue: '#4AB1FF',
+  green: '#16A34A',
+  orange: '#EA580C',
+  orangeRGBA: 'rgba(234, 88, 12, 0.7)',
+  red: '#DC2626',
+  background: '#f0f4f8',
   textPrimary: '#1f2937',
   textSecondary: '#6b7280',
   white: '#ffffff',
@@ -181,8 +186,10 @@ const SessionCard = ({ session, onPress }: SessionCardProps) => {
          {mapReady && !mapLoading && smoothedWaveCoordinates.length > 1 && (
              <Polyline
                  coordinates={smoothedWaveCoordinates}
-                 strokeColor={colors.pathAquaRGBA}
+                 strokeColor={colors.orangeRGBA}
                  strokeWidth={3}
+                 lineCap="round"
+                 lineJoin="round"
                  zIndex={1}
              />
          )}

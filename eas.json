@@ -8,6 +8,9 @@
       "developmentClient": true,
       "distribution": "internal"
     },
+    "internalTestFlight": {
+      "distribution": "internal"
+    },
     "preview": {
       "distribution": "internal"
     },
@@ -16,6 +19,22 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "ios": {
+        "appleId": "owenwalter2717@gmail.com",
+        "ascAppId": "6745488174",
+        "appleTeamId": "XG4W7T4RZ6"
+      }
+    },
+    "development": {
+      "ios": {
+        "appleId": "owenwalter2717@gmail.com",
+        "ascAppId": "6745488174",
+        "appleTeamId": "XG4W7T4RZ6"
+      }
+    },
+    "internalTestFlight": {
+      "ios": {}
+    }
   }
 }

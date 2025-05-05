@@ -274,43 +274,28 @@ const SessionsScreen = () => {
                 const lat = waveStartLat + (waveEndLat - waveStartLat) * progress + (Math.random() - 0.5) * 0.00005;
                 const lon = waveStartLon + (waveEndLon - waveStartLon) * progress + (Math.random() - 0.5) * 0.00005;
 
-                let speedMph = 0;
-                if (p > 0) {
-                    // Calculate speed based on previous point
-                    const prevPoint = waveCoordinates[p - 1];
-                    const distKm = getDistanceFromLatLonInKm(prevPoint.latitude, prevPoint.longitude, lat, lon);
-                    // Use actual time interval for speed calc
-                    const timeDiff = currentTimestamp.seconds - prevPoint.timestamp.seconds + (currentTimestamp.nanoseconds - prevPoint.timestamp.nanoseconds) / 1e9;
-                    speedMph = calculateSpeedMph(distKm, timeDiff);
-
-                    // Simulate speed variation (e.g., faster in the middle)
-                    const speedFactor = 1 + Math.sin(progress * Math.PI) * 0.5; // Faster middle
-                    speedMph *= speedFactor;
-                    speedMph = Math.max(0, Math.min(speedMph, 30)); // Clamp speed (0-30 mph)
-
-                    waveTotalSpeedSum += speedMph;
-                    speedPointsCount++;
-                    if (speedMph > waveMaxSpeed) waveMaxSpeed = speedMph;
-                    if (speedMph > sessionMaxSpeed) sessionMaxSpeed = speedMph;
-                }
-
                 waveCoordinates.push({ 
                     latitude: lat, 
                     longitude: lon, 
                     timestamp: currentTimestamp, 
-                    speed: speedMph // Store calculated speed
                 });
             }
 
-            const waveAverageSpeed = speedPointsCount > 0 ? waveTotalSpeedSum / speedPointsCount : 0;
+            // REMOVE AVERAGE/TOP SPEED CALC BASED ON POINT SPEED
+            // TODO: Need to calculate average/top speed differently now, perhaps based on overall wave stats?
+            // For now, just set placeholder values.
+            const placeholderWaveAverageSpeed = 10; // Placeholder
+            const placeholderWaveMaxSpeed = 15; // Placeholder
+            if (placeholderWaveMaxSpeed > sessionMaxSpeed) sessionMaxSpeed = placeholderWaveMaxSpeed; // Still track session max speed
+            // END REMOVAL/REPLACEMENT
 
             // Create wave data with calculated aggregates
             const newWaveData: Omit<Wave, 'id'> = {
                 startTime: waveStartTime,
                 endTime: waveEndTime,
                 duration: waveDurationSeconds,
-                topSpeed: waveMaxSpeed, // Use calculated max speed for the wave
-                averageSpeed: waveAverageSpeed, // Use calculated average speed
+                topSpeed: placeholderWaveMaxSpeed, // Use placeholder max speed for the wave
+                averageSpeed: placeholderWaveAverageSpeed, // Use placeholder average speed
                 coordinates: waveCoordinates, // Include detailed coords
             };
 

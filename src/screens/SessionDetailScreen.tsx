@@ -342,65 +342,6 @@ const SessionDetailScreen = () => {
     }
   };
 
-  // --- Heatmap Helper Functions ---
-
-  // Calculate speed between two points given distance (km) and time diff (seconds)
-  const calculateSpeedMph = (distanceKm: number, timeDiffSeconds: number): number => {
-    if (timeDiffSeconds <= 0) return 0;
-    const distanceMiles = distanceKm * 0.621371;
-    const timeHours = timeDiffSeconds / 3600;
-    return distanceMiles / timeHours;
-  };
-
-  // Define the color scale for speed heatmap
-  const getSpeedColor = (speedMph: number): string => {
-      if (speedMph < 5) return '#5e8cff'; // Blueish (Slow)
-      if (speedMph < 12) return '#5eff8c'; // Greenish (Medium)
-      if (speedMph < 18) return '#fffa5e'; // Yellowish (Fast)
-      return '#ff5e5e'; // Reddish (Very Fast)
-      // Adjust ranges and colors as needed
-  };
-
-  // Generate heatmap segments for a selected wave
-  const generateHeatmapSegments = (wave: Wave | null): { points: GeoPoint[], color: string }[] => {
-    if (!wave || !wave.coordinates || wave.coordinates.length < 2) {
-        return [];
-    }
-    const segments: { points: GeoPoint[], color: string }[] = [];
-    for (let i = 0; i < wave.coordinates.length - 1; i++) {
-        const p1 = wave.coordinates[i];
-        const p2 = wave.coordinates[i+1];
-        
-        // Get speeds, default to 0 if undefined
-        const speed1 = p1.speed ?? 0;
-        const speed2 = p2.speed ?? 0;
-        
-        let segmentAvgSpeed: number;
-
-        if (p1.speed !== undefined && p1.speed !== null) {
-             // If p1 has speed, average it with p2 (or use p1 if p2 is missing)
-             segmentAvgSpeed = (speed1 + (speed2 ?? speed1)) / 2;
-        } else {
-            // If p1 speed is missing, estimate using distance/time
-            const distKm = getDistanceFromLatLonInKm(p1.latitude, p1.longitude, p2.latitude, p2.longitude);
-            const timeDiff = p2.timestamp.seconds - p1.timestamp.seconds + (p2.timestamp.nanoseconds - p1.timestamp.nanoseconds) / 1e9;
-            segmentAvgSpeed = calculateSpeedMph(distKm, timeDiff);
-        }
-        
-        const color = getSpeedColor(segmentAvgSpeed);
-        segments.push({ points: [p1, p2], color });
-    }
-    return segments;
-  };
-
-  // Memoize heatmap generation
-  const heatmapSegments = useMemo(() => {
-    if (!selectedWave) {
-      return [];
-    }
-    return generateHeatmapSegments(selectedWave);
-  }, [selectedWave]);
-
   // --- Render Logic ---
   // Early returns are now AFTER all hooks
   if (loading) {
@@ -431,49 +372,26 @@ const SessionDetailScreen = () => {
                 // scrollEnabled={false} 
                 // zoomEnabled={false}
             >
-                {/* Render ALL non-selected wave paths (dimly) */}
+                {/* Render ALL wave paths */}
                 {waves.map((wave, waveIdx) => {
                     // Use optional chaining and check length
-                    if (waveIdx === selectedWaveIndex || !wave.coordinates || wave.coordinates.length < 2) {
+                    if (!wave.coordinates || wave.coordinates.length < 2) {
                         return null;
                     }
-                    // Render non-selected waves using original coordinates (no smoothing here)
+                    // Render ALL waves using orange, apply styles based on selection
+                    const isSelected = waveIdx === selectedWaveIndex;
                     return (
                         <Polyline
                             key={`wave-path-${waveIdx}`}
                             coordinates={wave.coordinates} // Use original coordinates
-                            strokeColor={colors.primaryBlueRGBA} 
-                            strokeWidth={3} 
-                            zIndex={0} 
+                            strokeColor={isSelected ? colors.orange : 'rgba(234, 88, 12, 0.5)'} // Full orange if selected, semi-transparent otherwise
+                            strokeWidth={isSelected ? 4 : 3} // Thicker if selected
+                            lineCap="round" // Smooth ends
+                            lineJoin="round" // Smooth joins
+                            zIndex={isSelected ? 1 : 0} // Selected on top
                         />
                     );
                 })}
-    
-                {/* Render selected wave as HEATMAP */}
-                {heatmapSegments.map((segment, index) => (
-                    <Polyline
-                        key={`heatmap-segment-${selectedWaveIndex}-${index}`}
-                        coordinates={segment.points} // Use the 2 points for the segment
-                        strokeColor={segment.color}
-                        strokeWidth={5} 
-                        zIndex={1} 
-                    />
-                ))}
-                {/* Markers for start/end of selected wave */}
-                {selectedWave?.coordinates && selectedWave.coordinates.length > 0 && (
-             <>
-                          <Marker
-                              coordinate={selectedWave.coordinates[0]}
-                              title={`Wave ${selectedWaveIndex + 1} Start`}
-                              pinColor={colors.markerAqua} 
-                          />
-                          <Marker
-                              coordinate={selectedWave.coordinates[selectedWave.coordinates.length - 1]}
-                              title={`Wave ${selectedWaveIndex + 1} End`}
-                              pinColor={colors.red}
-                          />
-             </>
-         )}
       </MapView>
 
             {/* --- Overlays Container --- */}

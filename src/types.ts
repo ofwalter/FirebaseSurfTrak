@@ -5,7 +5,6 @@ export interface GeoPoint {
   latitude: number;
   longitude: number;
   timestamp: Timestamp; // Timestamp for this specific point
-  speed?: number; // Speed at this point (e.g., in mph), optional for now
 }
 
 // Represents a single wave surfed within a session
