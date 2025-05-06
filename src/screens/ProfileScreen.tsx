@@ -19,50 +19,64 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { AppStackParamList } from '../navigation/AppNavigator'; // Import AppStackParamList
+import { useTheme } from '../context/ThemeContext'; // Import theme hook
+import { Colors } from '../constants/Colors'; // Import Colors
 
-// Define colors (reuse or centralize later)
-const colors = {
-  primaryBlue: '#1A73E8',
-  secondaryBlue: '#0056B3',
-  lightBlue: '#4AB1FF',
-  green: '#16A34A',
-  orange: '#EA580C',
-  red: '#DC2626',
-  background: '#f0f4f8',
-  cardBackground: '#ffffff',
-  textPrimary: '#1f2937',
-  textSecondary: '#6b7280',
-  white: '#ffffff',
-  iconBackgroundBlue: '#e0f2fe', // Light blue for icon bg
-  iconBackgroundGreen: '#dcfce7', // Light green
-  iconBackgroundOrange: '#fff7ed', // Light orange
-  iconBackgroundRed: '#fee2e2', // Light red
-  borderLight: '#dee2e6', // Added missing border color
-};
+// --- Reusable Components (Need theme awareness) ---
 
-// --- Reusable Components (Inline for simplicity) ---
-
-// Update ProfileHeader to accept navigation
 interface ProfileHeaderProps {
-    navigation: NativeStackNavigationProp<AppStackParamList, 'AppTabs'>; // Specific type
+    navigation: NativeStackNavigationProp<AppStackParamList, 'AppTabs'>;
+    colors: typeof Colors.light; // Pass theme colors needed
 }
 
-const ProfileHeader = ({ navigation }: ProfileHeaderProps) => (
-  <BlurView intensity={80} tint="light" style={styles.headerContainer}>
-    <View style={styles.headerContent}>
-      {/* Title */}
-      <Text style={styles.headerTitle}>Profile</Text>
-
-      {/* Settings Button (can link to settings menu item later) */}
+// Pass colors down
+const ProfileHeader = ({ navigation, colors }: ProfileHeaderProps) => (
+  <BlurView intensity={80} tint={colors === Colors.light ? "light" : "dark"} style={getHeaderStyles(colors).headerContainer}>
+    <View style={getHeaderStyles(colors).headerContent}>
+      <Text style={getHeaderStyles(colors).headerTitle}>Profile</Text>
       <TouchableOpacity 
-        style={styles.settingsButton}
-        onPress={() => navigation.navigate('Settings')} // Navigate on press
+        style={getHeaderStyles(colors).settingsButton}
+        onPress={() => navigation.navigate('Settings')} 
       >
-        <Ionicons name="settings-outline" size={24} color={colors.primaryBlue} />
+        <Ionicons name="settings-outline" size={24} color={colors.primary} />
       </TouchableOpacity>
     </View>
   </BlurView>
 );
+
+// Function to get header styles based on theme
+const getHeaderStyles = (colors: typeof Colors.light) => StyleSheet.create({
+  headerContainer: { // Positioning and base padding for blur
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingTop: Platform.OS === 'ios' ? 55 : 30, 
+    paddingBottom: 10, // Reduced bottom padding for tighter look
+  },
+  headerContent: { // Content layout within the blur container
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between', // Align items edge-to-edge
+    paddingHorizontal: 15, // Horizontal padding for content
+  },
+  headerTitle: {
+    // Title takes available space and centers (implicitly due to space-between)
+    fontSize: 20, // Keep size
+    fontWeight: 'bold',
+    color: colors.text, // Themed
+    textAlign: 'center',
+    flex: 1, // Allow text to take space for centering
+    // Add margin to compensate for button if needed, but space-between might handle it
+    // marginLeft: 40, 
+  },
+  settingsButton: {
+    // Button sits at the end due to space-between
+    padding: 8,
+    // Removed absolute positioning, relying on flexbox
+  },
+});
 
 // --- Define Interfaces (similar to HomeScreen) ---
 interface RankData {
@@ -89,10 +103,11 @@ interface UserProfileData { // Define base user profile structure
 // Update ProfileCard props and content
 interface ProfileCardProps {
     userProfile: UserProfileData | null;
-    // Remove explicit stats props, get from userProfile
+    colors: typeof Colors.light; // Pass colors
 }
 
-const ProfileCard = ({ userProfile }: ProfileCardProps) => {
+// Pass colors down
+const ProfileCard = ({ userProfile, colors }: ProfileCardProps) => {
     if (!userProfile) {
         return null; // Or a placeholder/loading state
     }
@@ -115,6 +130,8 @@ const ProfileCard = ({ userProfile }: ProfileCardProps) => {
     const progressPercent = isMaxRank ? 100 : Math.round(progress * 100);
     const xpNeeded = isMaxRank ? 0 : Math.max(0, nextRankThreshold - xp);
 
+    const styles = getProfileCardStyles(colors); // Get themed styles
+
     return (
         <View style={styles.profileCardContainer}>
             <Image
@@ -127,7 +144,7 @@ const ProfileCard = ({ userProfile }: ProfileCardProps) => {
             {/* XP Progress Bar - Use correct width */}
             <View style={styles.xpBarContainer}>
                  <LinearGradient
-                     colors={[colors.secondaryBlue, colors.primaryBlue, colors.lightBlue]}
+                     colors={colors.xpGradient} // Use themed gradient
                      style={[styles.xpBarForeground, { width: `${progressPercent}%` }]}
                      start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
                  />
@@ -145,33 +162,133 @@ const ProfileCard = ({ userProfile }: ProfileCardProps) => {
     );
 };
 
-interface MenuCardProps {
+// Function to get profile card styles based on theme
+const getProfileCardStyles = (colors: typeof Colors.light) => StyleSheet.create({
+    profileCardContainer: {
+        alignItems: 'center',
+        paddingHorizontal: 20, // Original padding
+        paddingVertical: 25,
+        marginHorizontal: 15, // Original margin
+        backgroundColor: colors.cardBackground, // Themed
+        borderRadius: 20, // Original radius
+        marginTop: Platform.OS === 'ios' ? 50 : 30, // Add some top margin
+        elevation: 3,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 }, // Original shadow
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+    },
+    profilePicture: {
+        width: 128, // Original size
+        height: 128,
+        borderRadius: 64,
+        borderWidth: 4, // Original border
+        borderColor: colors.cardBackground, // Border color same as card background
+        marginBottom: 15,
+        shadowColor: '#000', // Original picture shadow
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 3,
+        backgroundColor: colors.border, // Placeholder background
+    },
+    profileName: {
+        fontSize: 22,
+        fontWeight: 'bold',
+        color: colors.text,
+        marginBottom: 4,
+    },
+    profileRank: { // Original styling
+        fontSize: 16,
+        fontWeight: '500',
+        color: colors.primary, // Use themed primary color
+        marginBottom: 15, // Original margin
+    },
+    xpBarContainer: { // Original styling
+        width: '80%',
+        height: 10,
+        backgroundColor: colors.border, // Use themed border/background
+        borderRadius: 5,
+        overflow: 'hidden',
+        marginBottom: 8,
+    },
+    xpBarForeground: {
+        height: '100%',
+        borderRadius: 5,
+    },
+    xpTextContainer: { // Original styling
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '80%',
+    },
+    xpText: { // Original styling
+        fontSize: 13,
+        color: colors.text,
+        fontWeight: '500',
+    },
+    xpNextText: { // Original styling
+        fontSize: 13,
+        color: colors.textSecondary,
+        marginLeft: 5,
+    },
+});
+
+// NEW: Menu Item Row Component
+interface MenuItemRowProps {
   iconName: string;
   iconColor: string;
   iconBackgroundColor: string;
   text: string;
-  gradientColors: readonly [string, string, ...string[]];
   onPress: () => void;
+  colors: typeof Colors.light;
+  isLogout?: boolean; // Optional flag for distinct logout styling
 }
 
-const MenuCard = ({ iconName, iconColor, iconBackgroundColor, text, gradientColors, onPress }: MenuCardProps) => (
-    <TouchableOpacity onPress={onPress} activeOpacity={0.8}>
-        <LinearGradient
-            colors={gradientColors}
-            style={styles.menuCard}
-            start={{ x: 0, y: 0.5 }}
-            end={{ x: 1, y: 0.5 }}
-        >
-            <View style={styles.menuCardContent}>
-                <View style={[styles.menuIconContainer, { backgroundColor: iconBackgroundColor }]}>
-                    <Ionicons name={iconName} size={22} color={iconColor} />
-                </View>
-                <Text style={styles.menuText}>{text}</Text>
-                <Ionicons name="chevron-forward-outline" size={20} color={colors.textSecondary} />
-            </View>
-        </LinearGradient>
+const MenuItemRow: React.FC<MenuItemRowProps> = ({ 
+  iconName, 
+  iconColor, 
+  iconBackgroundColor, 
+  text, 
+  onPress, 
+  colors, 
+  isLogout = false 
+}) => {
+  const styles = getMenuItemRowStyles(colors, isLogout);
+  return (
+    <TouchableOpacity onPress={onPress} style={styles.menuItemContainer} activeOpacity={0.7}>
+      <View style={[styles.iconContainer, { backgroundColor: iconBackgroundColor }]}>
+        <Ionicons name={iconName} size={20} color={iconColor} />
+      </View>
+      <Text style={styles.menuItemText}>{text}</Text>
+      <Ionicons name="chevron-forward-outline" size={22} color={colors.textSecondary} />
     </TouchableOpacity>
-);
+  );
+};
+
+// Function to get menu item row styles based on theme
+const getMenuItemRowStyles = (colors: typeof Colors.light, isLogout: boolean) => StyleSheet.create({
+  menuItemContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+    backgroundColor: colors.cardBackground, // Use card background for rows
+    // Add border logic later if needed (e.g., for grouping)
+  },
+  iconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 18, // Make it circular
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 15,
+  },
+  menuItemText: {
+    flex: 1,
+    fontSize: 16,
+    color: isLogout ? colors.logoutButtonBackground : colors.text, // Red for logout
+    // fontWeight: '500', // Optional: adjust weight
+  },
+});
 
 // --- ProfileScreen Implementation ---
 
@@ -180,9 +297,15 @@ type ProfileScreenNavigationProp = NativeStackNavigationProp<AppStackParamList, 
 
 const ProfileScreen = () => {
   const navigation = useNavigation<ProfileScreenNavigationProp>(); // Get navigation object
+  const { theme, isThemeLoading } = useTheme(); // Get theme state
+  const colors = Colors[theme]; // Get color palette for current theme
+
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const [userProfile, setUserProfile] = useState<UserProfileData | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
+
+   // Styles need to be created inside the component to access theme
+  const styles = getProfileScreenStyles(colors);
 
    // Effect 1: Update current user from auth state
    useEffect(() => {
@@ -308,61 +431,74 @@ const ProfileScreen = () => {
     );
   };
 
-  // Update handleSettings to navigate
+  // Menu navigation handlers
+  const handleGoals = () => navigation.navigate('Goals');
   const handleSettings = () => navigation.navigate('Settings');
   const handleDeviceManager = () => Alert.alert("Device Manager", "Device Manager not implemented yet.");
   const handleHelp = () => Alert.alert("Help & Support", "Help & Support not implemented yet.");
 
-  // Render loading indicator while profile is loading
-  if (loadingProfile) {
-     return (
-         <View style={styles.loadingContainer}>
-             <ActivityIndicator size="large" color={colors.primaryBlue} />
-         </View>
-     );
+  // Show loading indicator while theme OR profile is loading
+  if (isThemeLoading || loadingProfile) {
+    return (
+        <View style={[styles.loadingContainer, {backgroundColor: colors.background}]}>
+            <ActivityIndicator size="large" color={colors.primary} />
+        </View>
+    );
+  }
+
+  if (!currentUser) {
+    // This case might not be reached if RootNavigator handles auth correctly,
+    // but good for robustness
+    return (
+        <View style={styles.loadingContainer}>
+            <Text style={styles.errorText}>Please log in to view your profile.</Text>
+        </View>
+    );
   }
 
   return (
     <View style={styles.screenContainer}>
-      {/* Pass navigation prop to ProfileHeader */}
-      <ProfileHeader navigation={navigation} />
-      <ScrollView style={styles.scrollContainer} contentContainerStyle={styles.scrollContentContainer}>
-        {/* Pass fetched userProfile data to ProfileCard */}
-        <ProfileCard userProfile={userProfile} />
+      {/* <ProfileHeader navigation={navigation} colors={colors} /> */}
+      <ScrollView 
+        contentContainerStyle={styles.scrollContentContainer}
+      >
+        <ProfileCard userProfile={userProfile} colors={colors} />
 
-        {/* Menu Options */}
-        <View style={styles.menuGroup}>
-            <MenuCard
+        {/* New Menu Section */}
+        <View style={styles.menuContainer}>
+            {/* Grouping items visually - can enhance later */}
+            <MenuItemRow
                 iconName="settings-outline"
-                iconColor={colors.primaryBlue}
+                iconColor={colors.primary} // Example themed color
                 iconBackgroundColor={colors.iconBackgroundBlue}
                 text="Settings"
-                gradientColors={[colors.white, colors.white]} // Simple white card
-                onPress={handleSettings} // Use updated handler
+                onPress={handleSettings}
+                colors={colors}
             />
-            <MenuCard
-                iconName="watch-outline" // Example icon for device manager
-                iconColor={colors.green}
-                iconBackgroundColor={colors.iconBackgroundGreen}
+            <MenuItemRow
+                iconName="hardware-chip-outline"
+                iconColor={colors.iconDevices} // Use themed icon color
+                iconBackgroundColor={colors.iconBackgroundBlue} // Can theme this separately if needed
                 text="Device Manager"
-                gradientColors={['#ffffff', '#f9fafb']}
                 onPress={handleDeviceManager}
+                colors={colors}
             />
-            <MenuCard
+            <MenuItemRow
                 iconName="help-circle-outline"
-                iconColor={colors.orange}
+                iconColor={colors.iconHelp} // Use themed icon color
                 iconBackgroundColor={colors.iconBackgroundOrange}
                 text="Help & Support"
-                gradientColors={['#ffffff', '#f9fafb']}
                 onPress={handleHelp}
+                colors={colors}
             />
-            <MenuCard
+            <MenuItemRow
                 iconName="log-out-outline"
-                iconColor={colors.red}
+                iconColor={colors.iconLogout} // Use themed icon color (often red)
                 iconBackgroundColor={colors.iconBackgroundRed}
-                text="Log Out"
-                gradientColors={[colors.white, colors.white]} // Simple white card
+                text="Logout"
                 onPress={handleLogout}
+                colors={colors}
+                isLogout={true} // Flag for red text
             />
         </View>
       </ScrollView>
@@ -370,164 +506,38 @@ const ProfileScreen = () => {
   );
 };
 
-// --- Styles ---
-const styles = StyleSheet.create({
+// Function to get main screen styles based on theme
+const getProfileScreenStyles = (colors: typeof Colors.light) => StyleSheet.create({
   screenContainer: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.background, // Themed background
   },
-  scrollContainer: {
-      flex: 1,
-  },
-  scrollContentContainer: {
+  scrollContentContainer: { 
       paddingBottom: 30,
-      paddingTop: 115, // Increased paddingTop for more space
+      // No specific paddingTop, ProfileCard margin handles it
   },
-  // Header Styles (similar to Sessions)
-  headerContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    zIndex: 10,
-    paddingTop: Platform.OS === 'ios' ? 55 : 30, // Adjusted padding
-    paddingBottom: 15,
-    borderBottomWidth: Platform.OS === 'ios' ? 0 : 0.5,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
-  },
-  headerContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 15,
-  },
-  headerTitle: {
-    fontSize: 28, // 3xl approx
-    fontWeight: 'bold',
-    color: colors.textPrimary,
-    flex: 1, // Allow title to take space
-    textAlign: 'center', // Center title
-    marginLeft: 40, // Offset for the left (empty) space to center properly
-  },
-  settingsButton: {
-    padding: 8,
-    borderRadius: 20,
-    backgroundColor: colors.white,
-    width: 40, // Ensure consistent size
-    height: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  // Profile Card Styles
-  profileCardContainer: {
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 25,
+  menuContainer: { // Container for the new menu items
+    marginTop: 20, // Space above the menu
     marginHorizontal: 15,
-    backgroundColor: colors.white,
-    borderRadius: 20,
-    marginTop: 0, // Sits right below the header space
-    elevation: 3,
-    shadowColor: '#000',
+    backgroundColor: colors.cardBackground, // Background for the group
+    borderRadius: 10, // Rounded corners for the group
+    overflow: 'hidden', // Ensures children conform to border radius
+    // Add shadow/elevation if desired for the whole block
+    shadowColor: "#000",
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  profilePicture: {
-    width: 128,
-    height: 128,
-    borderRadius: 64,
-    borderWidth: 4,
-    borderColor: colors.white,
-    marginBottom: 15,
-    // Add shadow to picture itself for depth
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.2,
-    shadowRadius: 3,
-    backgroundColor: '#eee', // Background while loading
-  },
-  profileName: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: colors.textPrimary,
-    marginBottom: 4,
-  },
-  profileRank: { // Style for the rank name
-      fontSize: 16,
-      fontWeight: '500',
-      color: colors.primaryBlue,
-      marginBottom: 15, // Space below rank
-  },
-  // XP Bar Styles (similar to RankCard)
-  xpBarContainer: {
-      width: '80%', // Make bar slightly smaller than card width
-      height: 10,
-      backgroundColor: colors.background, // Use screen background color
-      borderRadius: 5,
-      overflow: 'hidden',
-      marginBottom: 8,
-  },
-  xpBarForeground: {
-      height: '100%',
-      borderRadius: 5,
-  },
-  xpTextContainer: {
-     flexDirection: 'row',
-     justifyContent: 'space-between',
-     width: '80%', // Match bar width
-     marginBottom: 20, // Space below XP text
-  },
-  xpText: {
-      fontSize: 13,
-      color: colors.textPrimary,
-      fontWeight: '500',
-  },
-  xpNextText: {
-      fontSize: 13,
-      color: colors.textSecondary,
-  },
-  // Menu Styles
-  menuGroup: {
-    marginTop: 25,
-    marginHorizontal: 15,
-  },
-  menuCard: {
-    // backgroundColor: colors.white, // Gradient handles background
-    borderRadius: 16,
-    marginBottom: 12,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.08,
-    shadowRadius: 3,
-    overflow: 'hidden',
-  },
-  menuCardContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 15,
-    paddingHorizontal: 15,
-  },
-  menuIconContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 15,
-  },
-  menuText: {
+  loadingContainer: {
     flex: 1,
-    fontSize: 16,
-    color: colors.textPrimary,
-    fontWeight: '500',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.background, // Themed background
   },
-  loadingContainer: { // Style for loading indicator view
-      flex: 1,
-      justifyContent: 'center',
-      alignItems: 'center',
-      backgroundColor: colors.background,
+  errorText: {
+      color: colors.textSecondary, // Themed secondary text
+      fontSize: 16,
   },
 });
 

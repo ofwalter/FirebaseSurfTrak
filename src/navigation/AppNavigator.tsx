@@ -5,11 +5,14 @@ import { onAuthStateChanged, User } from 'firebase/auth';
 import { auth } from '../services/firebaseConfig';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import Ionicons from 'react-native-vector-icons/Ionicons'; // Import icon library
+import { useTheme } from '../context/ThemeContext'; // Import useTheme
+import { Colors, AppNavigationThemeLight, AppNavigationThemeDark } from '../constants/Colors'; // Import themes
+import { ActivityIndicator, View } from 'react-native';
+import { Appearance } from 'react-native';
 
 import LoginScreen from '../screens/LoginScreen';
 import SignupScreen from '../screens/SignupScreen';
 import HomeScreen from '../screens/HomeScreen';
-import { ActivityIndicator, View } from 'react-native';
 
 // Import new screens
 import SessionsScreen from '../screens/SessionsScreen';
@@ -88,8 +91,11 @@ const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   );
 };
 
-// Tab Navigator Component - Stays mostly the same
+// Tab Navigator Component - Apply Theming
 const AppTabNavigator = () => {
+  const { theme } = useTheme(); // Get theme
+  const currentColors = Colors[theme]; // Get specific color palette
+
   return (
     <AppTabs.Navigator
       screenOptions={({ route }) => ({
@@ -99,15 +105,20 @@ const AppTabNavigator = () => {
           else if (route.name === 'Sessions') iconName = focused ? 'water' : 'water-outline';
           else if (route.name === 'Forecast') iconName = focused ? 'sunny' : 'sunny-outline';
           else if (route.name === 'Profile') iconName = focused ? 'person-circle' : 'person-circle-outline';
+          // Use themed color for icon? React Navigation theme might handle this via tabBarActive/InactiveTintColor
           return <Ionicons name={iconName} size={size} color={color} />;
         },
-        tabBarActiveTintColor: '#004080',
-        tabBarInactiveTintColor: 'gray',
-        // Header should be shown by the parent Stack Navigator now
-        headerShown: false, // <- Important: Hide headers within Tabs
+        // Apply themed colors to tab bar
+        tabBarActiveTintColor: currentColors.tint, // Use themed tint color
+        tabBarInactiveTintColor: currentColors.tabIconDefault, // Use themed inactive color
+        tabBarStyle: {
+          backgroundColor: currentColors.cardBackground, // Use themed background for tab bar
+          borderTopColor: currentColors.border, // Use themed border color
+        },
+        headerShown: false, 
       })}
     >
-      {/* Tab Screens - Note: Titles set here might be overridden by Stack Navigator */}
+      {/* Tab Screens */}
       <AppTabs.Screen name="Home" component={HomeScreen} />
       <AppTabs.Screen name="Sessions" component={SessionsScreen} />
       <AppTabs.Screen name="Forecast" component={ForecastScreen} />
@@ -116,59 +127,80 @@ const AppTabNavigator = () => {
   );
 };
 
-// New: Main App Stack Navigator Component
+// New: Main App Stack Navigator Component (can use theme for header styling)
 const AppStackNavigator = () => {
+  const { theme } = useTheme();
+  const currentColors = Colors[theme];
   return (
-    <AppStack.Navigator>
-      {/* The entire Tab navigator is nested as a single screen */}
+    <AppStack.Navigator
+        screenOptions={{
+            // Apply theme to Stack Navigator headers
+            headerStyle: {
+                backgroundColor: currentColors.cardBackground,
+            },
+            headerTintColor: currentColors.text, // Color for title and back button
+            headerTitleStyle: {
+                // fontWeight: 'bold', // Optional: customize font weight
+            },
+        }}
+    >
       <AppStack.Screen
         name="AppTabs"
-        component={AppTabNavigator} // Use the Tab navigator component
-        options={{ headerShown: false }} // Hide the stack header for the tab screen itself
+        component={AppTabNavigator}
+        options={{ headerShown: false }}
       />
-      {/* The Session Detail screen */}
       <AppStack.Screen
         name="SessionDetail"
         component={SessionDetailScreen}
         options={({ route }) => ({
           title: `${route.params.sessionLocation} Details`,
           headerBackTitle: "Back",
+          // Header styles inherited from screenOptions
         })}
       />
-      {/* Add Goals Screen to the stack */}
        <AppStack.Screen
          name="Goals"
          component={GoalsScreen}
          options={{ 
-             title: "Your Goals", // Set header title
+             title: "Your Goals",
              headerBackTitle: "Back",
+             // Header styles inherited from screenOptions
           }}
        />
-       {/* Add Settings Screen to the stack */}
        <AppStack.Screen
          name="Settings"
          component={SettingsScreen}
          options={{ 
              title: "Settings", 
              headerBackTitle: "Back",
+             // Header styles inherited from screenOptions
           }}
        />
-      {/* Add other stack screens here if needed */}
     </AppStack.Navigator>
   );
 };
 
-// Main Navigator Logic - Update to use AppStackNavigator
+// Main Navigator Logic - Apply theme to NavigationContainer
 const AppNavigator = () => {
   const { user } = useAuth();
+  const { theme, isThemeLoading } = useTheme(); // Get theme and loading state
+
+  // Don't render container until theme is loaded to prevent flashing
+  if (isThemeLoading) {
+     // Optionally return a themed loading view
+     const loadingThemeColors = Colors[Appearance.getColorScheme() ?? 'light'];
+     return (
+       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: loadingThemeColors.background }}>
+         <ActivityIndicator size="large" color={loadingThemeColors.primary} />
+       </View>
+     );
+  }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer theme={theme === 'dark' ? AppNavigationThemeDark : AppNavigationThemeLight}>
       {user ? (
-        // User is logged in - show the MAIN App Stack Navigator
         <AppStackNavigator />
       ) : (
-        // User is not logged in
         <AuthStack.Navigator screenOptions={{ headerShown: false }}>
           <AuthStack.Screen name="Login" component={LoginScreen} />
           <AuthStack.Screen name="Signup" component={SignupScreen} />
