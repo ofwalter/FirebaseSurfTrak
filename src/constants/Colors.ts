@@ -6,6 +6,7 @@ const secondaryBlue = '#0056B3';
 const lightBlue = '#4AB1FF';
 const green = '#16A34A';
 const orange = '#EA580C';
+const orangeDark = '#EA580C'; // Added for dark theme, same as light for now for visibility
 const orangeRGBA = 'rgba(234, 88, 12, 0.7)';
 const red = '#DC2626';
 const cancelRed = '#ef4444';
@@ -27,6 +28,10 @@ const light = {
   inputBorder: '#d1d5db',
   modalHandle: '#d1d5db',
   modalOverlay: 'rgba(0, 0, 0, 0.5)',
+  white: white,
+  red: red,
+  icon: '#1f2937',
+  iconBackground: 'rgba(255, 255, 255, 0.8)',
   // Specific Components
   primary: primaryBlue,
   secondary: secondaryBlue,
@@ -65,6 +70,8 @@ const light = {
   gradientHelp: ['#FDE68A', '#F97316'] as GradientColors,
   gradientLogout: ['#FDA4AF', '#F43F5E'] as GradientColors,
   xpGradient: [secondaryBlue, primaryBlue, lightBlue] as GradientColors,
+  activityIndicator: orange,
+  sliderBackground: 'rgba(255, 255, 255, 0.1)', // Example for light theme
 };
 
 // Dark Theme Colors
@@ -78,6 +85,10 @@ const dark = {
   inputBorder: '#4b5563',
   modalHandle: '#4b5563',
   modalOverlay: 'rgba(0, 0, 0, 0.7)', // Slightly darker overlay
+  white: white,
+  red: red,
+  icon: '#e5e7eb',
+  iconBackground: 'rgba(31, 41, 55, 0.8)',
   // Specific Components
   primary: lightBlue, // Use lighter blue for primary actions
   secondary: primaryBlue, // Darker blue as secondary
@@ -92,7 +103,7 @@ const dark = {
   switchTrackFalse: '#4b5563',
   switchTrackTrue: primaryBlue,
   // Wave Polylines (Keep bright for visibility on dark map)
-  waveSelected: orange,
+  waveSelected: orange, // Using 'orange' for now, could be 'orangeDark' if differentiated
   waveUnselected: orangeRGBA,
   // Session Card Specific (uses light text on light map - no change needed?)
   sessionCardBackground: 'rgba(0, 0, 0, 0.6)', // Darker blur
@@ -116,6 +127,8 @@ const dark = {
   gradientHelp: ['#FDE68A', '#F97316'] as GradientColors,
   gradientLogout: ['#FDA4AF', '#F43F5E'] as GradientColors,
   xpGradient: [secondaryBlue, primaryBlue, lightBlue] as GradientColors,
+  activityIndicator: orangeDark, // Used orangeDark here
+  sliderBackground: 'rgba(31, 41, 55, 0.1)', // Example for dark theme (based on cardBackground #1f2937)
 };
 
 export const Colors = {

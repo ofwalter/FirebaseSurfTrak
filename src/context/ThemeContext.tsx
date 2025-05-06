@@ -15,8 +15,13 @@ interface ThemeContextType {
   // TODO: Add function later to set theme explicitly, e.g., setTheme(newTheme: Theme)
 }
 
-// Create the context with a default value (can be undefined or a default object)
-const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+// Create the context with a default value
+export const ThemeContext = createContext<ThemeContextType>({
+    theme: 'light', // Default theme
+    toggleTheme: () => { console.warn('ThemeProvider not used!'); },
+    isThemeLoading: true, // Add loading state
+    // TODO: Add function later to set theme explicitly, e.g., setTheme(newTheme: Theme)
+});
 
 interface ThemeProviderProps {
   children: ReactNode;

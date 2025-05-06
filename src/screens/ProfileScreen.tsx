@@ -257,11 +257,11 @@ const MenuItemRow: React.FC<MenuItemRowProps> = ({
     <TouchableOpacity onPress={onPress} style={styles.menuItemContainer} activeOpacity={0.7}>
       <View style={[styles.iconContainer, { backgroundColor: iconBackgroundColor }]}>
         <Ionicons name={iconName} size={20} color={iconColor} />
-      </View>
+                </View>
       <Text style={styles.menuItemText}>{text}</Text>
       <Ionicons name="chevron-forward-outline" size={22} color={colors.textSecondary} />
     </TouchableOpacity>
-  );
+);
 };
 
 // Function to get menu item row styles based on theme
@@ -449,11 +449,11 @@ const ProfileScreen = () => {
   if (!currentUser) {
     // This case might not be reached if RootNavigator handles auth correctly,
     // but good for robustness
-    return (
-        <View style={styles.loadingContainer}>
+     return (
+         <View style={styles.loadingContainer}>
             <Text style={styles.errorText}>Please log in to view your profile.</Text>
-        </View>
-    );
+         </View>
+     );
   }
 
   return (
@@ -512,7 +512,7 @@ const getProfileScreenStyles = (colors: typeof Colors.light) => StyleSheet.creat
     flex: 1,
     backgroundColor: colors.background, // Themed background
   },
-  scrollContentContainer: { 
+  scrollContentContainer: {
       paddingBottom: 30,
       // No specific paddingTop, ProfileCard margin handles it
   },
@@ -537,7 +537,7 @@ const getProfileScreenStyles = (colors: typeof Colors.light) => StyleSheet.creat
   },
   errorText: {
       color: colors.textSecondary, // Themed secondary text
-      fontSize: 16,
+    fontSize: 16,
   },
 });
 

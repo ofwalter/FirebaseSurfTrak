@@ -153,9 +153,7 @@ const AppStackNavigator = () => {
         name="SessionDetail"
         component={SessionDetailScreen}
         options={({ route }) => ({
-          title: `${route.params.sessionLocation} Details`,
-          headerBackTitle: "Back",
-          // Header styles inherited from screenOptions
+          headerShown: false,
         })}
       />
        <AppStack.Screen
