@@ -21,6 +21,7 @@ import ProfileScreen from '../screens/ProfileScreen';
 import SessionDetailScreen from '../screens/SessionDetailScreen'; // Import the new detail screen
 import GoalsScreen from '../screens/GoalsScreen'; // Import Goals Screen
 import SettingsScreen from '../screens/SettingsScreen'; // Import Settings Screen
+import DeviceScreen from '../screens/DeviceScreen'; // Import Device Screen
 
 // Define Stack types
 export type AuthStackParamList = {
@@ -32,6 +33,7 @@ export type AuthStackParamList = {
 type AppTabParamList = {
   Home: undefined;
   Sessions: undefined; // This now refers to the initial Sessions screen in the tab
+  Device: undefined; // Added Device Tab
   Forecast: undefined;
   Profile: undefined;
 };
@@ -103,6 +105,7 @@ const AppTabNavigator = () => {
           let iconName: string = '';
           if (route.name === 'Home') iconName = focused ? 'home' : 'home-outline';
           else if (route.name === 'Sessions') iconName = focused ? 'water' : 'water-outline';
+          else if (route.name === 'Device') iconName = focused ? 'hardware-chip' : 'hardware-chip-outline'; // Added Device Icon
           else if (route.name === 'Forecast') iconName = focused ? 'sunny' : 'sunny-outline';
           else if (route.name === 'Profile') iconName = focused ? 'person-circle' : 'person-circle-outline';
           // Use themed color for icon? React Navigation theme might handle this via tabBarActive/InactiveTintColor
@@ -121,6 +124,7 @@ const AppTabNavigator = () => {
       {/* Tab Screens */}
       <AppTabs.Screen name="Home" component={HomeScreen} />
       <AppTabs.Screen name="Sessions" component={SessionsScreen} />
+      <AppTabs.Screen name="Device" component={DeviceScreen} />{/* Added Device Screen */}
       <AppTabs.Screen name="Forecast" component={ForecastScreen} />
       <AppTabs.Screen name="Profile" component={ProfileScreen} />
     </AppTabs.Navigator>
